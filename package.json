@@ -1,0 +1,13 @@
+{
+  "name": "distributed-casino-demo-full",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal distributed casino demo: API, computation server, and React interface with Crash and Mines.",
+  "scripts": {
+    "install:all": "npm install --prefix api && npm install --prefix game-server && npm install --prefix interface",
+    "dev": "node ./print-run-help.js",
+    "dev:api": "npm run dev --prefix api",
+    "dev:game": "npm run dev --prefix game-server",
+    "dev:web": "npm run dev --prefix interface"
+  }
+}

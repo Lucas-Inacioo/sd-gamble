@@ -24,11 +24,14 @@ export default function CrashGame() {
 
   const [events, setEvents] = useState([]);
   const [history, setHistory] = useState([]);
+  const [gameServerLogs, setGameServerLogs] = useState([]);
+  const [apiLogs, setApiLogs] = useState([]);
   const [chartPoints, setChartPoints] = useState([{ t: 0, y: 1.0 }]);
 
   useEffect(() => {
     checkApiHealth();
     fetchHistory();
+    fetchApiLogs();
 
     const socket = io(GAME_SERVER_URL, {
       transports: ["websocket", "polling"],
@@ -49,27 +52,37 @@ export default function CrashGame() {
       addEvent("socket_disconnected", {});
     });
 
+    socket.on("server_logs_snapshot", (data) => {
+      setGameServerLogs((data.logs || []).filter(isCrashOrSystem).slice(0, 12));
+    });
+
+    socket.on("game_server_log", (log) => {
+      if (isCrashOrSystem(log)) {
+        setGameServerLogs((oldLogs) => [log, ...oldLogs].slice(0, 12));
+      }
+    });
+
     socket.on("server_snapshot", (data) => {
       addEvent("server_snapshot", data);
 
       if (data.status === "active") {
+        const snapshotMultiplier = Number(data.multiplier || 1);
+        const elapsedSeconds = Number(data.elapsedSeconds || 0);
+
         setPhase("active");
         setRoundId(data.externalRoundId);
-        setMultiplier(Number(data.multiplier || 1));
+        setMultiplier(snapshotMultiplier);
         setCrashPoint(null);
         setServerSeed(null);
         setPublicSeed(null);
         setServerSeedCommitment(data.serverSeedCommitment || null);
-
-        setChartPoints((old) => {
-          if (old.length <= 1) {
-            return [
-              { x: 0, y: 1.0 },
-              { x: 1, y: Number(data.multiplier || 1) },
-            ];
-          }
-          return old;
-        });
+        setChartPoints([
+          { t: 0, y: 1.0 },
+          { t: elapsedSeconds, y: snapshotMultiplier },
+        ]);
+      } else if (data.status) {
+        setPhase(data.status);
+        setSecondsLeft(data.secondsLeft || null);
       }
     });
 
@@ -98,7 +111,6 @@ export default function CrashGame() {
       setServerSeed(null);
       setPublicSeed(null);
       setServerSeedCommitment(data.serverSeedCommitment || null);
-
       setChartPoints([{ t: 0, y: 1.0 }]);
     });
 
@@ -147,6 +159,7 @@ export default function CrashGame() {
       });
 
       await fetchHistory();
+      await fetchApiLogs();
     });
 
     return () => {
@@ -158,6 +171,7 @@ export default function CrashGame() {
     try {
       const response = await fetch(`${API_BASE_URL}/health`);
       const data = await response.json();
+
       setApiStatus(data.ok ? "connected" : "error");
     } catch {
       setApiStatus("disconnected");
@@ -181,6 +195,19 @@ export default function CrashGame() {
     }
   }
 
+  async function fetchApiLogs() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/logs?game=crash`);
+      const data = await response.json();
+
+      if (data.success) {
+        setApiLogs(data.logs || []);
+      }
+    } catch {
+      setApiLogs([]);
+    }
+  }
+
   function addEvent(name, payload) {
     setEvents((previousEvents) => [
       {
@@ -199,29 +226,29 @@ export default function CrashGame() {
     return history.slice(0, 12);
   }, [history]);
 
-  const chartSvgPoints = useMemo(() => {
-    if (chartPoints.length === 0) return "";
-
-    const maxMultiplier = Math.max(
+  const maxMultiplierForChart = useMemo(() => {
+    return Math.max(
       5,
       ...chartPoints.map((point) => point.y),
       multiplier,
       crashPoint || 1
     );
+  }, [chartPoints, multiplier, crashPoint]);
 
-    const maxTime = Math.max(
-      30,
-      ...chartPoints.map((point) => point.t)
-    );
+  const maxTimeForChart = useMemo(() => {
+    return Math.max(30, ...chartPoints.map((point) => point.t));
+  }, [chartPoints]);
+
+  const chartSvgPoints = useMemo(() => {
+    if (chartPoints.length === 0) return "";
 
     return chartPoints
       .map((point) => {
         const x =
           CHART_PADDING +
-          (point.t / maxTime) * (CHART_WIDTH - CHART_PADDING * 2);
+          (point.t / maxTimeForChart) * (CHART_WIDTH - CHART_PADDING * 2);
 
-        // Linear Y scale. This keeps the exponential curve visually exponential.
-        const yProgress = (point.y - 1) / (maxMultiplier - 1);
+        const yProgress = (point.y - 1) / (maxMultiplierForChart - 1);
 
         const y =
           CHART_HEIGHT -
@@ -231,7 +258,12 @@ export default function CrashGame() {
         return `${x},${y}`;
       })
       .join(" ");
-  }, [chartPoints, multiplier, crashPoint]);
+  }, [chartPoints, maxMultiplierForChart, maxTimeForChart]);
+
+  const chartGuideLabels = useMemo(() => {
+    return Array.from(new Set([1, 2, 3, 4, Math.ceil(maxMultiplierForChart)]))
+      .filter((value) => value <= Math.ceil(maxMultiplierForChart));
+  }, [maxMultiplierForChart]);
 
   const multiplierColor =
     phase === "crashed" ? "#f85149" : phase === "active" ? "#3fb950" : "#e6edf3";
@@ -251,6 +283,7 @@ export default function CrashGame() {
             <Badge label={`Socket: ${socketStatus}`} />
             <Badge label={`API: ${apiStatus}`} />
             <Badge label={`Phase: ${phase}`} />
+            <Badge label={`Knows crash: ${frontendKnowsCrashPoint ? "yes" : "no"}`} />
           </div>
         </div>
 
@@ -266,8 +299,7 @@ export default function CrashGame() {
               key={round.id}
               style={{
                 ...styles.resultPill,
-                color:
-                  Number(round.crashPoint) >= 2 ? "#3fb950" : "#f85149",
+                color: Number(round.crashPoint) >= 2 ? "#3fb950" : "#f85149",
               }}
             >
               {Number(round.crashPoint).toFixed(2)}x
@@ -323,14 +355,7 @@ export default function CrashGame() {
             />
 
             {chartGuideLabels.map((label, index) => {
-              const maxMultiplier = Math.max(
-                5,
-                ...chartPoints.map((point) => point.y),
-                multiplier,
-                crashPoint || 1
-              );
-
-              const yProgress = (label - 1) / (maxMultiplier - 1);
+              const yProgress = (label - 1) / (maxMultiplierForChart - 1);
 
               const y =
                 CHART_HEIGHT -
@@ -347,12 +372,7 @@ export default function CrashGame() {
                     stroke="#30363d"
                     strokeDasharray="6 8"
                   />
-                  <text
-                    x={10}
-                    y={y + 4}
-                    fill="#8b949e"
-                    fontSize="12"
-                  >
+                  <text x={10} y={y + 4} fill="#8b949e" fontSize="12">
                     {Number(label).toFixed(2)}x
                   </text>
                 </g>
@@ -410,49 +430,74 @@ export default function CrashGame() {
       </section>
 
       <section style={styles.columns}>
-        <div style={styles.card}>
-          <h2>Socket Events</h2>
-
-          {events.length === 0 && <p>No socket events yet.</p>}
-
-          {events.map((event) => (
-            <div key={event.id} style={styles.event}>
-              <strong>
-                {event.time} — {event.name}
-              </strong>
-              <pre style={styles.smallPre}>
-{JSON.stringify(event.payload, null, 2)}
-              </pre>
-            </div>
-          ))}
-        </div>
-
-        <div style={styles.card}>
-          <h2>API History</h2>
-
-          <button style={styles.button} onClick={fetchHistory}>
-            Refresh history
-          </button>
-
-          {history.length === 0 && <p>No completed rounds stored yet.</p>}
-
-          {history.map((round) => (
-            <div key={round.id} style={styles.historyItem}>
-              <strong>{Number(round.crashPoint).toFixed(2)}x</strong>
-              <br />
-              <span>{round.externalRoundId}</span>
-              <br />
-              <small>{round.crashedAt}</small>
-            </div>
-          ))}
-        </div>
+        <LogPanel title="Socket Events" items={events} kind="event" />
+        <HistoryPanel title="Crash API History" history={history} onRefresh={fetchHistory} />
+        <LogPanel title="Game Server Logs" items={gameServerLogs} kind="server" />
+        <LogPanel title="API Logs" items={apiLogs} kind="api" onRefresh={fetchApiLogs} />
       </section>
     </div>
   );
 }
 
+function isCrashOrSystem(log) {
+  return log.game === "crash" || log.game === "system";
+}
+
 function Badge({ label }) {
   return <span style={styles.badge}>{label}</span>;
+}
+
+function HistoryPanel({ title, history, onRefresh }) {
+  return (
+    <div style={styles.card}>
+      <h2>{title}</h2>
+
+      <button style={styles.button} onClick={onRefresh}>
+        Refresh
+      </button>
+
+      {history.length === 0 && <p>No completed rounds stored yet.</p>}
+
+      {history.map((round) => (
+        <div key={round.id} style={styles.historyItem}>
+          <strong>{Number(round.crashPoint).toFixed(2)}x</strong>
+          <br />
+          <span>{round.externalRoundId}</span>
+          <br />
+          <small>{round.crashedAt}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LogPanel({ title, items, kind, onRefresh }) {
+  return (
+    <div style={styles.card}>
+      <h2>{title}</h2>
+
+      {onRefresh && (
+        <button style={styles.button} onClick={onRefresh}>
+          Refresh
+        </button>
+      )}
+
+      {items.length === 0 && <p>No logs yet.</p>}
+
+      {items.map((item) => (
+        <div key={item.id} style={styles.event}>
+          <strong>
+            {item.time || new Date(item.createdAt).toLocaleTimeString()} —{" "}
+            {item.name || item.event}
+          </strong>
+
+          <pre style={styles.smallPre}>
+{JSON.stringify(kind === "event" ? item.payload : item.details, null, 2)}
+          </pre>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 const styles = {
@@ -603,5 +648,6 @@ const styles = {
     padding: "10px 14px",
     cursor: "pointer",
     fontWeight: 700,
+    marginBottom: 8,
   },
 };

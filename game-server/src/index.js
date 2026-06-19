@@ -1,624 +1,593 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { io } from "socket.io-client";
+const crypto = require("crypto");
+const { Server } = require("socket.io");
+const fetch = require("node-fetch");
+require("dotenv").config();
 
-const GAME_SERVER_URL = "http://localhost:3001";
-const API_BASE_URL = "http://localhost:4000";
+const PORT = Number(process.env.PORT || 3001);
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:4000";
+const GAME_SERVER_TOKEN = process.env.GAME_SERVER_TOKEN || "dev-secret-token";
 
-const CHART_WIDTH = 900;
-const CHART_HEIGHT = 420;
-const CHART_PADDING = 36;
+const WAITING_SECONDS = 5;
+const COOLDOWN_MS = 3000;
+const MULTIPLIER_UPDATE_MS = 100;
+const CRASH_GROWTH_RATE = 0.06;
+const MINES_BOARD_SIZE = 25;
 
-export default function CrashGame() {
-  const [socketStatus, setSocketStatus] = useState("connecting");
-  const [apiStatus, setApiStatus] = useState("checking");
+const io = new Server(PORT, {
+  cors: {
+    origin: FRONTEND_URL,
+    methods: ["GET", "POST"],
+  },
+});
 
-  const [phase, setPhase] = useState("initial");
-  const [secondsLeft, setSecondsLeft] = useState(null);
-  const [roundId, setRoundId] = useState(null);
-  const [multiplier, setMultiplier] = useState(1.0);
-  const [crashPoint, setCrashPoint] = useState(null);
+let crashPhase = "booting";
+let waitingSecondsLeft = null;
+let currentRound = null;
+let serverLogs = [];
 
-  const [serverSeedCommitment, setServerSeedCommitment] = useState(null);
-  const [serverSeed, setServerSeed] = useState(null);
-  const [publicSeed, setPublicSeed] = useState(null);
+console.log(`Game server running on http://localhost:${PORT}`);
+console.log("Role: computation + real-time coordination service");
 
-  const [events, setEvents] = useState([]);
-  const [history, setHistory] = useState([]);
-  const [chartPoints, setChartPoints] = useState([{ t: 0, y: 1.0 }]);
+logServer("system", "game_server_started", {
+  port: PORT,
+  role: "computation + real-time coordination",
+});
 
-  useEffect(() => {
-    checkApiHealth();
-    fetchHistory();
+io.on("connection", (socket) => {
+  logServer("system", "client_connected", { socketId: socket.id });
 
-    const socket = io(GAME_SERVER_URL, {
-      transports: ["websocket", "polling"],
-    });
+  socket.emit("server_snapshot", buildCrashSnapshot());
+  socket.emit("server_logs_snapshot", { logs: serverLogs.slice(0, 80) });
 
-    socket.on("connect", () => {
-      setSocketStatus("connected");
-      addEvent("socket_connected", { socketId: socket.id });
-    });
+  socket.on("disconnect", () => {
+    logServer("system", "client_disconnected", { socketId: socket.id });
+  });
 
-    socket.on("connect_error", (error) => {
-      setSocketStatus("connection error");
-      addEvent("socket_connect_error", { message: error.message });
-    });
+  socket.on("mines_start_game", (payload = {}) => {
+    startMinesGame(socket, payload);
+  });
 
-    socket.on("disconnect", () => {
-      setSocketStatus("disconnected");
-      addEvent("socket_disconnected", {});
-    });
+  socket.on("mines_reveal_tile", (payload = {}) => {
+    revealMinesTile(socket, payload);
+  });
 
-    socket.on("server_snapshot", (data) => {
-      addEvent("server_snapshot", data);
+  socket.on("mines_cash_out", () => {
+    cashOutMinesGame(socket);
+  });
+});
 
-      if (data.status === "active") {
-        setPhase("active");
-        setRoundId(data.externalRoundId);
-        setMultiplier(Number(data.multiplier || 1));
-        setCrashPoint(null);
-        setServerSeed(null);
-        setPublicSeed(null);
-        setServerSeedCommitment(data.serverSeedCommitment || null);
+startCrashLoop();
 
-        setChartPoints((old) => {
-          if (old.length <= 1) {
-            return [
-              { x: 0, y: 1.0 },
-              { x: 1, y: Number(data.multiplier || 1) },
-            ];
-          }
-          return old;
-        });
-      }
-    });
+async function startCrashLoop() {
+  while (true) {
+    await runCrashWaitingPhase();
+    await runCrashActiveRound();
+    await delay(COOLDOWN_MS);
+  }
+}
 
-    socket.on("round_waiting", (data) => {
-      addEvent("round_waiting", data);
+async function runCrashWaitingPhase() {
+  crashPhase = "waiting";
 
-      setPhase("waiting");
-      setSecondsLeft(data.secondsLeft);
-      setRoundId(null);
-      setMultiplier(1.0);
-      setCrashPoint(null);
-      setServerSeed(null);
-      setPublicSeed(null);
-      setServerSeedCommitment(null);
-      setChartPoints([{ t: 0, y: 1.0 }]);
-    });
+  for (let secondsLeft = WAITING_SECONDS; secondsLeft >= 1; secondsLeft--) {
+    waitingSecondsLeft = secondsLeft;
 
-    socket.on("round_started", (data) => {
-      addEvent("round_started", data);
+    logServer("crash", "round_waiting", { secondsLeft });
+    io.emit("round_waiting", { secondsLeft });
 
-      setPhase("active");
-      setSecondsLeft(null);
-      setRoundId(data.externalRoundId);
-      setMultiplier(1.0);
-      setCrashPoint(null);
-      setServerSeed(null);
-      setPublicSeed(null);
-      setServerSeedCommitment(data.serverSeedCommitment || null);
+    await delay(1000);
+  }
+}
 
-      setChartPoints([{ t: 0, y: 1.0 }]);
-    });
+function runCrashActiveRound() {
+  return new Promise((resolve) => {
+    const secret = generateCrashSecret();
 
-    socket.on("multiplier_update", (data) => {
-      const nextMultiplier = Number(data.multiplier || 1);
-      const elapsedSeconds = Number(data.elapsedSeconds || 0);
+    crashPhase = "active";
+    waitingSecondsLeft = null;
 
-      setMultiplier(nextMultiplier);
-
-      setChartPoints((previous) => {
-        const nextPoints = [
-          ...previous,
-          {
-            t: elapsedSeconds,
-            y: nextMultiplier,
-          },
-        ];
-
-        return nextPoints.slice(-400);
-      });
-    });
-
-    socket.on("round_crashed", async (data) => {
-      addEvent("round_crashed", data);
-
-      const finalCrashPoint = Number(data.crashPoint);
-
-      setPhase("crashed");
-      setCrashPoint(finalCrashPoint);
-      setMultiplier(finalCrashPoint);
-
-      setServerSeed(data.serverSeed || null);
-      setPublicSeed(data.publicSeed || null);
-      setServerSeedCommitment(data.serverSeedCommitment || null);
-
-      setChartPoints((previous) => {
-        const nextPoints = [
-          ...previous,
-          {
-            t: Number(data.elapsedSeconds || previous.length * 0.1),
-            y: finalCrashPoint,
-          },
-        ];
-
-        return nextPoints.slice(-400);
-      });
-
-      await fetchHistory();
-    });
-
-    return () => {
-      socket.disconnect();
+    currentRound = {
+      status: "active",
+      externalRoundId: crypto.randomUUID(),
+      startedAtMs: Date.now(),
+      crashedAtMs: null,
+      crashPoint: secret.crashPoint,
+      serverSeed: secret.serverSeed,
+      publicSeed: secret.publicSeed,
+      serverSeedCommitment: secret.serverSeedCommitment,
     };
-  }, []);
 
-  async function checkApiHealth() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/health`);
-      const data = await response.json();
-      setApiStatus(data.ok ? "connected" : "error");
-    } catch {
-      setApiStatus("disconnected");
-    }
-  }
+    logServer("crash", "round_started", {
+      externalRoundId: currentRound.externalRoundId,
+      serverSeedCommitment: currentRound.serverSeedCommitment,
+      note: "Crash point is hidden until round_crashed.",
+    });
 
-  async function fetchHistory() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/rounds/history`);
-      const data = await response.json();
+    io.emit("round_started", {
+      externalRoundId: currentRound.externalRoundId,
+      startedAt: new Date(currentRound.startedAtMs).toISOString(),
+      serverSeedCommitment: currentRound.serverSeedCommitment,
+    });
 
-      if (data.success) {
-        setHistory(data.rounds || []);
-        setApiStatus("connected");
-      } else {
-        setApiStatus("error");
+    const intervalId = setInterval(async () => {
+      const elapsedSeconds = getElapsedSeconds(currentRound.startedAtMs);
+      const multiplier = getCrashMultiplier(currentRound.startedAtMs);
+
+      if (multiplier >= currentRound.crashPoint) {
+        clearInterval(intervalId);
+
+        crashPhase = "crashed";
+        currentRound.status = "crashed";
+        currentRound.crashedAtMs = Date.now();
+
+        const finishedRound = { ...currentRound };
+        const finalElapsedSeconds = getElapsedSeconds(finishedRound.startedAtMs);
+
+        logServer("crash", "round_crashed", {
+          externalRoundId: finishedRound.externalRoundId,
+          crashPoint: finishedRound.crashPoint,
+          elapsedSeconds: finalElapsedSeconds,
+          note: "Crash point is revealed only now.",
+        });
+
+        io.emit("round_crashed", {
+          externalRoundId: finishedRound.externalRoundId,
+          crashPoint: finishedRound.crashPoint,
+          elapsedSeconds: finalElapsedSeconds,
+          serverSeed: finishedRound.serverSeed,
+          publicSeed: finishedRound.publicSeed,
+          serverSeedCommitment: finishedRound.serverSeedCommitment,
+        });
+
+        await saveCrashRoundToApi(finishedRound);
+
+        resolve();
+        return;
       }
-    } catch {
-      setHistory([]);
-      setApiStatus("disconnected");
-    }
+
+      io.emit("multiplier_update", {
+        externalRoundId: currentRound.externalRoundId,
+        multiplier,
+        elapsedSeconds,
+      });
+    }, MULTIPLIER_UPDATE_MS);
+  });
+}
+
+function buildCrashSnapshot() {
+  if (crashPhase === "active" && currentRound) {
+    const elapsedSeconds = getElapsedSeconds(currentRound.startedAtMs);
+
+    return {
+      status: "active",
+      externalRoundId: currentRound.externalRoundId,
+      multiplier: getCrashMultiplier(currentRound.startedAtMs),
+      elapsedSeconds,
+      serverSeedCommitment: currentRound.serverSeedCommitment,
+    };
   }
 
-  function addEvent(name, payload) {
-    setEvents((previousEvents) => [
-      {
-        id: `${Date.now()}-${Math.random()}`,
-        time: new Date().toLocaleTimeString(),
-        name,
-        payload,
-      },
-      ...previousEvents,
-    ].slice(0, 12));
-  }
+  return {
+    status: crashPhase,
+    secondsLeft: waitingSecondsLeft,
+  };
+}
 
-  const frontendKnowsCrashPoint = crashPoint !== null;
+function getElapsedSeconds(startedAtMs) {
+  return Number(((Date.now() - startedAtMs) / 1000).toFixed(2));
+}
 
-  const recentResults = useMemo(() => {
-    return history.slice(0, 12);
-  }, [history]);
+function getCrashMultiplier(startedAtMs) {
+  const elapsedSeconds = (Date.now() - startedAtMs) / 1000;
+  const multiplier = Math.exp(elapsedSeconds * CRASH_GROWTH_RATE);
 
-  const chartSvgPoints = useMemo(() => {
-    if (chartPoints.length === 0) return "";
+  return Number(multiplier.toFixed(2));
+}
 
-    const maxMultiplier = Math.max(
-      5,
-      ...chartPoints.map((point) => point.y),
-      multiplier,
-      crashPoint || 1
-    );
+function generateCrashSecret() {
+  const serverSeed = crypto.randomBytes(32).toString("hex");
+  const publicSeed = crypto.randomUUID();
 
-    const maxTime = Math.max(
-      30,
-      ...chartPoints.map((point) => point.t)
-    );
+  const serverSeedCommitment = crypto
+    .createHash("sha256")
+    .update(serverSeed)
+    .digest("hex");
 
-    return chartPoints
-      .map((point) => {
-        const x =
-          CHART_PADDING +
-          (point.t / maxTime) * (CHART_WIDTH - CHART_PADDING * 2);
+  const hash = crypto
+    .createHmac("sha256", serverSeed)
+    .update(publicSeed)
+    .digest("hex");
 
-        // Linear Y scale. This keeps the exponential curve visually exponential.
-        const yProgress = (point.y - 1) / (maxMultiplier - 1);
-
-        const y =
-          CHART_HEIGHT -
-          CHART_PADDING -
-          yProgress * (CHART_HEIGHT - CHART_PADDING * 2);
-
-        return `${x},${y}`;
-      })
-      .join(" ");
-  }, [chartPoints, multiplier, crashPoint]);
-
-  const chartGuideLabels = useMemo(() => {
-    const maxMultiplier = Math.max(
-      5,
-      ...chartPoints.map((point) => point.y),
-      multiplier,
-      crashPoint || 1
-    );
-
-    return [
-      1,
-      2,
-      3,
-      4,
-      Math.ceil(maxMultiplier),
-    ];
-  }, [chartPoints, multiplier, crashPoint]);
-
-  const multiplierColor =
-    phase === "crashed" ? "#f85149" : phase === "active" ? "#3fb950" : "#e6edf3";
-
-  return (
-    <div>
-      <section style={styles.card}>
-        <div style={styles.headerRow}>
-          <div>
-            <h1 style={styles.title}>Crash</h1>
-            <p style={styles.subtitle}>
-              Visual real-time representation of the crash round.
-            </p>
-          </div>
-
-          <div style={styles.badgeRow}>
-            <Badge label={`Socket: ${socketStatus}`} />
-            <Badge label={`API: ${apiStatus}`} />
-            <Badge label={`Phase: ${phase}`} />
-          </div>
-        </div>
-
-        <div style={styles.recentStrip}>
-          <span style={styles.recentStripLabel}>Recent results</span>
-
-          {recentResults.length === 0 && (
-            <span style={styles.emptyText}>No completed rounds yet.</span>
-          )}
-
-          {recentResults.map((round) => (
-            <span
-              key={round.id}
-              style={{
-                ...styles.resultPill,
-                color:
-                  Number(round.crashPoint) >= 2 ? "#3fb950" : "#f85149",
-              }}
-            >
-              {Number(round.crashPoint).toFixed(2)}x
-            </span>
-          ))}
-        </div>
-      </section>
-
-      <section style={styles.card}>
-        <div style={styles.chartContainer}>
-          <div style={styles.chartHud}>
-            {phase === "waiting" && (
-              <div style={styles.waitingBox}>
-                Next round starts in <strong>{secondsLeft}s</strong>
-              </div>
-            )}
-
-            <div style={{ ...styles.multiplierDisplay, color: multiplierColor }}>
-              {Number(multiplier).toFixed(2)}x
-            </div>
-
-            {phase === "active" && (
-              <div style={styles.infoText}>
-                Round is active. Frontend does not know the crash point.
-              </div>
-            )}
-
-            {phase === "crashed" && (
-              <div style={styles.crashedText}>
-                Crashed at {Number(crashPoint).toFixed(2)}x
-              </div>
-            )}
-          </div>
-
-          <svg
-            viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
-            style={styles.chartSvg}
-          >
-            <defs>
-              <linearGradient id="lineGradient" x1="0" x2="1" y1="0" y2="0">
-                <stop offset="0%" stopColor="#2ea043" />
-                <stop offset="100%" stopColor="#58a6ff" />
-              </linearGradient>
-            </defs>
-
-            <rect
-              x="0"
-              y="0"
-              width={CHART_WIDTH}
-              height={CHART_HEIGHT}
-              fill="#0d1117"
-              rx="14"
-            />
-
-            {chartGuideLabels.map((label, index) => {
-              const maxMultiplier = Math.max(
-                5,
-                ...chartPoints.map((point) => point.y),
-                multiplier,
-                crashPoint || 1
-              );
-
-              const yProgress = (label - 1) / (maxMultiplier - 1);
-
-              const y =
-                CHART_HEIGHT -
-                CHART_PADDING -
-                yProgress * (CHART_HEIGHT - CHART_PADDING * 2);
-
-              return (
-                <g key={`${label}-${index}`}>
-                  <line
-                    x1={CHART_PADDING}
-                    x2={CHART_WIDTH - CHART_PADDING}
-                    y1={y}
-                    y2={y}
-                    stroke="#30363d"
-                    strokeDasharray="6 8"
-                  />
-                  <text
-                    x={10}
-                    y={y + 4}
-                    fill="#8b949e"
-                    fontSize="12"
-                  >
-                    {Number(label).toFixed(2)}x
-                  </text>
-                </g>
-              );
-            })}
-
-            <line
-              x1={CHART_PADDING}
-              x2={CHART_PADDING}
-              y1={CHART_PADDING}
-              y2={CHART_HEIGHT - CHART_PADDING}
-              stroke="#6e7681"
-            />
-            <line
-              x1={CHART_PADDING}
-              x2={CHART_WIDTH - CHART_PADDING}
-              y1={CHART_HEIGHT - CHART_PADDING}
-              y2={CHART_HEIGHT - CHART_PADDING}
-              stroke="#6e7681"
-            />
-
-            {chartSvgPoints && (
-              <polyline
-                fill="none"
-                stroke="url(#lineGradient)"
-                strokeWidth="6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                points={chartSvgPoints}
-              />
-            )}
-          </svg>
-        </div>
-      </section>
-
-      <section style={styles.card}>
-        <h2>Current Round Data</h2>
-
-        <pre style={styles.pre}>
-{JSON.stringify(
-  {
-    phase,
-    roundId,
-    multiplier,
-    crashPoint,
-    frontendKnowsCrashPoint,
-    serverSeedCommitment,
+  return {
     serverSeed,
     publicSeed,
-  },
-  null,
-  2
-)}
-        </pre>
-      </section>
-
-      <section style={styles.columns}>
-        <div style={styles.card}>
-          <h2>Socket Events</h2>
-
-          {events.length === 0 && <p>No socket events yet.</p>}
-
-          {events.map((event) => (
-            <div key={event.id} style={styles.event}>
-              <strong>
-                {event.time} — {event.name}
-              </strong>
-              <pre style={styles.smallPre}>
-{JSON.stringify(event.payload, null, 2)}
-              </pre>
-            </div>
-          ))}
-        </div>
-
-        <div style={styles.card}>
-          <h2>API History</h2>
-
-          <button style={styles.button} onClick={fetchHistory}>
-            Refresh history
-          </button>
-
-          {history.length === 0 && <p>No completed rounds stored yet.</p>}
-
-          {history.map((round) => (
-            <div key={round.id} style={styles.historyItem}>
-              <strong>{Number(round.crashPoint).toFixed(2)}x</strong>
-              <br />
-              <span>{round.externalRoundId}</span>
-              <br />
-              <small>{round.crashedAt}</small>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
+    serverSeedCommitment,
+    crashPoint: calculateCrashPoint(hash),
+  };
 }
 
-function Badge({ label }) {
-  return <span style={styles.badge}>{label}</span>;
+function calculateCrashPoint(hash) {
+  if (isHashDivisible(hash, 20)) return 1.0;
+
+  const h = Number.parseInt(hash.slice(0, 13), 16);
+  const e = Math.pow(2, 52);
+  const result = Math.floor((100 * e - h) / (e - h)) / 100;
+
+  return Math.max(1.0, Math.min(5.0, Number(result.toFixed(2))));
 }
 
-const styles = {
-  card: {
-    background: "#161b22",
-    border: "1px solid #30363d",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-    boxShadow: "0 12px 30px rgba(0,0,0,0.25)",
-  },
-  title: {
-    margin: 0,
-    fontSize: 32,
-  },
-  subtitle: {
-    margin: "8px 0 0 0",
-    color: "#8b949e",
-  },
-  headerRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 16,
-    flexWrap: "wrap",
-  },
-  badgeRow: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  badge: {
-    background: "#0d1117",
-    color: "#e6edf3",
-    border: "1px solid #30363d",
-    borderRadius: 999,
-    padding: "8px 12px",
-    fontSize: 13,
-    fontWeight: 700,
-  },
-  recentStrip: {
-    marginTop: 20,
-    display: "flex",
-    gap: 10,
-    alignItems: "center",
-    flexWrap: "wrap",
-  },
-  recentStripLabel: {
-    color: "#8b949e",
-    fontSize: 14,
-    fontWeight: 700,
-  },
-  resultPill: {
-    background: "#0d1117",
-    border: "1px solid #30363d",
-    borderRadius: 999,
-    padding: "8px 12px",
-    fontWeight: 800,
-  },
-  emptyText: {
-    color: "#8b949e",
-  },
-  chartContainer: {
-    position: "relative",
-  },
-  chartHud: {
-    position: "absolute",
-    inset: 0,
-    zIndex: 2,
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "center",
-    alignItems: "center",
-    pointerEvents: "none",
-    textAlign: "center",
-  },
-  waitingBox: {
-    position: "absolute",
-    top: 18,
-    background: "rgba(13,17,23,0.85)",
-    border: "1px solid #30363d",
-    borderRadius: 999,
-    padding: "8px 14px",
-    color: "#e6edf3",
-  },
-  multiplierDisplay: {
-    fontSize: 88,
-    fontWeight: 900,
-    textShadow: "0 8px 24px rgba(0,0,0,0.35)",
-  },
-  infoText: {
-    marginTop: 10,
-    color: "#3fb950",
-    fontWeight: 700,
-    background: "rgba(13,17,23,0.85)",
-    padding: "8px 12px",
-    borderRadius: 999,
-  },
-  crashedText: {
-    marginTop: 10,
-    color: "#f85149",
-    fontWeight: 800,
-    background: "rgba(13,17,23,0.9)",
-    padding: "8px 12px",
-    borderRadius: 999,
-  },
-  chartSvg: {
-    width: "100%",
-    height: "auto",
-    display: "block",
-    borderRadius: 14,
-  },
-  pre: {
-    background: "#0d1117",
-    border: "1px solid #30363d",
-    borderRadius: 10,
-    padding: 12,
-    overflowX: "auto",
-  },
-  smallPre: {
-    background: "#0d1117",
-    borderRadius: 8,
-    padding: 8,
-    fontSize: 12,
-    overflowX: "auto",
-  },
-  columns: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: 20,
-  },
-  event: {
-    borderTop: "1px solid #30363d",
-    marginTop: 12,
-    paddingTop: 12,
-  },
-  historyItem: {
-    borderTop: "1px solid #30363d",
-    marginTop: 12,
-    paddingTop: 12,
-    wordBreak: "break-all",
-  },
-  button: {
-    background: "#238636",
-    color: "white",
-    border: 0,
-    borderRadius: 8,
-    padding: "10px 14px",
-    cursor: "pointer",
-    fontWeight: 700,
-  },
-};
+function isHashDivisible(hash, mod) {
+  let value = 0;
+
+  for (let i = 0; i < hash.length; i += 4) {
+    value =
+      ((value << 16) + Number.parseInt(hash.substring(i, i + 4), 16)) % mod;
+  }
+
+  return value === 0;
+}
+
+async function saveCrashRoundToApi(round) {
+  try {
+    logServer("crash", "api_persist_request", {
+      externalRoundId: round.externalRoundId,
+    });
+
+    const response = await fetch(`${API_BASE_URL}/api/internal/rounds`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Game-Server-Token": GAME_SERVER_TOKEN,
+      },
+      body: JSON.stringify({
+        externalRoundId: round.externalRoundId,
+        crashPoint: round.crashPoint,
+        serverSeed: round.serverSeed,
+        publicSeed: round.publicSeed,
+        serverSeedCommitment: round.serverSeedCommitment,
+        startedAt: new Date(round.startedAtMs).toISOString(),
+        crashedAt: new Date(round.crashedAtMs).toISOString(),
+      }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+
+      logServer("crash", "api_persist_failed", {
+        status: response.status,
+        body: text,
+      });
+
+      return;
+    }
+
+    logServer("crash", "api_persist_success", {
+      externalRoundId: round.externalRoundId,
+    });
+  } catch (error) {
+    logServer("crash", "api_persist_error", {
+      message: error.message,
+    });
+  }
+}
+
+function startMinesGame(socket, payload) {
+  const minesCount = clamp(Number(payload.minesCount || 3), 1, MINES_BOARD_SIZE - 1);
+  const secret = generateMinesSecret(minesCount);
+
+  const game = {
+    status: "active",
+    externalGameId: crypto.randomUUID(),
+    startedAtMs: Date.now(),
+    finishedAtMs: null,
+    minesCount,
+    minePositions: secret.minePositions,
+    revealedTiles: [],
+    payoutMultiplier: 1.0,
+    serverSeed: secret.serverSeed,
+    publicSeed: secret.publicSeed,
+    serverSeedCommitment: secret.serverSeedCommitment,
+  };
+
+  socket.data.minesGame = game;
+
+  logServer("mines", "game_started", {
+    socketId: socket.id,
+    externalGameId: game.externalGameId,
+    minesCount: game.minesCount,
+    serverSeedCommitment: game.serverSeedCommitment,
+    note: "Mine positions are hidden until loss or cash out.",
+  });
+
+  socket.emit("mines_game_started", {
+    externalGameId: game.externalGameId,
+    minesCount: game.minesCount,
+    boardSize: MINES_BOARD_SIZE,
+    revealedTiles: [],
+    payoutMultiplier: game.payoutMultiplier,
+    serverSeedCommitment: game.serverSeedCommitment,
+  });
+}
+
+function revealMinesTile(socket, payload) {
+  const game = socket.data.minesGame;
+  const tileIndex = Number(payload.tileIndex);
+
+  if (!game || game.status !== "active") {
+    socket.emit("mines_error", {
+      message: "No active mines game. Start a new game first.",
+    });
+
+    logServer("mines", "reveal_rejected", {
+      socketId: socket.id,
+      reason: "no_active_game",
+    });
+
+    return;
+  }
+
+  if (!Number.isInteger(tileIndex) || tileIndex < 0 || tileIndex >= MINES_BOARD_SIZE) {
+    socket.emit("mines_error", { message: "Invalid tile index." });
+
+    logServer("mines", "reveal_rejected", {
+      externalGameId: game.externalGameId,
+      reason: "invalid_tile",
+      tileIndex,
+    });
+
+    return;
+  }
+
+  if (game.revealedTiles.includes(tileIndex)) {
+    socket.emit("mines_error", { message: "Tile already revealed." });
+
+    logServer("mines", "reveal_rejected", {
+      externalGameId: game.externalGameId,
+      reason: "already_revealed",
+      tileIndex,
+    });
+
+    return;
+  }
+
+  if (game.minePositions.includes(tileIndex)) {
+    game.status = "lost";
+    game.finishedAtMs = Date.now();
+    game.payoutMultiplier = 0;
+
+    logServer("mines", "mine_hit", {
+      externalGameId: game.externalGameId,
+      tileIndex,
+      minePositions: game.minePositions,
+      note: "Mine positions are revealed because the game ended.",
+    });
+
+    socket.emit("mines_game_lost", publicFinishedMinesGame(game, {
+      selectedTile: tileIndex,
+    }));
+
+    saveMinesGameToApi(game);
+    return;
+  }
+
+  game.revealedTiles.push(tileIndex);
+  game.revealedTiles.sort((a, b) => a - b);
+  game.payoutMultiplier = calculateMinesPayout(game.minesCount, game.revealedTiles.length);
+
+  logServer("mines", "safe_tile_revealed", {
+    externalGameId: game.externalGameId,
+    tileIndex,
+    revealedCount: game.revealedTiles.length,
+    payoutMultiplier: game.payoutMultiplier,
+    note: "Mine positions remain hidden.",
+  });
+
+  const allSafeTilesRevealed =
+    game.revealedTiles.length === MINES_BOARD_SIZE - game.minesCount;
+
+  if (allSafeTilesRevealed) {
+    game.status = "won";
+    game.finishedAtMs = Date.now();
+
+    logServer("mines", "all_safe_tiles_revealed", {
+      externalGameId: game.externalGameId,
+      payoutMultiplier: game.payoutMultiplier,
+    });
+
+    socket.emit("mines_game_cashed_out", publicFinishedMinesGame(game));
+    saveMinesGameToApi(game);
+    return;
+  }
+
+  socket.emit("mines_tile_revealed", {
+    externalGameId: game.externalGameId,
+    tileIndex,
+    revealedTiles: game.revealedTiles,
+    payoutMultiplier: game.payoutMultiplier,
+    frontendKnowsMinePositions: false,
+  });
+}
+
+function cashOutMinesGame(socket) {
+  const game = socket.data.minesGame;
+
+  if (!game || game.status !== "active") {
+    socket.emit("mines_error", {
+      message: "No active mines game to cash out.",
+    });
+
+    logServer("mines", "cashout_rejected", {
+      socketId: socket.id,
+      reason: "no_active_game",
+    });
+
+    return;
+  }
+
+  if (game.revealedTiles.length === 0) {
+    socket.emit("mines_error", {
+      message: "Reveal at least one safe tile before cashing out.",
+    });
+
+    logServer("mines", "cashout_rejected", {
+      externalGameId: game.externalGameId,
+      reason: "no_tiles_revealed",
+    });
+
+    return;
+  }
+
+  game.status = "cashed_out";
+  game.finishedAtMs = Date.now();
+
+  logServer("mines", "game_cashed_out", {
+    externalGameId: game.externalGameId,
+    revealedTiles: game.revealedTiles.length,
+    payoutMultiplier: game.payoutMultiplier,
+    note: "Mine positions are revealed after cash out.",
+  });
+
+  socket.emit("mines_game_cashed_out", publicFinishedMinesGame(game));
+  saveMinesGameToApi(game);
+}
+
+function publicFinishedMinesGame(game, extra = {}) {
+  return {
+    externalGameId: game.externalGameId,
+    status: game.status,
+    minesCount: game.minesCount,
+    revealedTiles: game.revealedTiles,
+    minePositions: game.minePositions,
+    payoutMultiplier: game.payoutMultiplier,
+    serverSeed: game.serverSeed,
+    publicSeed: game.publicSeed,
+    serverSeedCommitment: game.serverSeedCommitment,
+    frontendKnowsMinePositions: true,
+    ...extra,
+  };
+}
+
+function generateMinesSecret(minesCount) {
+  const serverSeed = crypto.randomBytes(32).toString("hex");
+  const publicSeed = crypto.randomUUID();
+
+  const serverSeedCommitment = crypto
+    .createHash("sha256")
+    .update(serverSeed)
+    .digest("hex");
+
+  const mineSet = new Set();
+  let nonce = 0;
+
+  while (mineSet.size < minesCount) {
+    const digest = crypto
+      .createHmac("sha256", serverSeed)
+      .update(`${publicSeed}:${nonce}`)
+      .digest();
+
+    for (
+      let offset = 0;
+      offset <= digest.length - 4 && mineSet.size < minesCount;
+      offset += 4
+    ) {
+      const value = digest.readUInt32BE(offset);
+      mineSet.add(value % MINES_BOARD_SIZE);
+    }
+
+    nonce += 1;
+  }
+
+  return {
+    serverSeed,
+    publicSeed,
+    serverSeedCommitment,
+    minePositions: Array.from(mineSet).sort((a, b) => a - b),
+  };
+}
+
+function calculateMinesPayout(minesCount, revealedCount) {
+  const risk = minesCount / MINES_BOARD_SIZE;
+  const multiplier = 1 + revealedCount * (0.12 + risk * 0.75);
+
+  return Number(multiplier.toFixed(2));
+}
+
+async function saveMinesGameToApi(game) {
+  try {
+    logServer("mines", "api_persist_request", {
+      externalGameId: game.externalGameId,
+      status: game.status,
+    });
+
+    const response = await fetch(`${API_BASE_URL}/api/internal/mines/games`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Game-Server-Token": GAME_SERVER_TOKEN,
+      },
+      body: JSON.stringify({
+        externalGameId: game.externalGameId,
+        status: game.status,
+        minesCount: game.minesCount,
+        revealedTiles: game.revealedTiles,
+        minePositions: game.minePositions,
+        payoutMultiplier: game.payoutMultiplier,
+        serverSeed: game.serverSeed,
+        publicSeed: game.publicSeed,
+        serverSeedCommitment: game.serverSeedCommitment,
+        startedAt: new Date(game.startedAtMs).toISOString(),
+        finishedAt: new Date(game.finishedAtMs).toISOString(),
+      }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+
+      logServer("mines", "api_persist_failed", {
+        status: response.status,
+        body: text,
+      });
+
+      return;
+    }
+
+    logServer("mines", "api_persist_success", {
+      externalGameId: game.externalGameId,
+    });
+  } catch (error) {
+    logServer("mines", "api_persist_error", {
+      message: error.message,
+    });
+  }
+}
+
+function logServer(game, event, details = {}) {
+  const log = {
+    id: `${Date.now()}-${Math.random()}`,
+    service: "game-server",
+    game,
+    event,
+    details,
+    createdAt: new Date().toISOString(),
+  };
+
+  console.log(`[game-server][${game}] ${event}`, details);
+
+  serverLogs.unshift(log);
+  serverLogs = serverLogs.slice(0, 250);
+
+  io.emit("game_server_log", log);
+
+  return log;
+}
+
+function clamp(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+
+  return Math.max(min, Math.min(max, Math.floor(value)));
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

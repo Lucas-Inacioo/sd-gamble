@@ -1,13 +1,15 @@
 {
-  "name": "distributed-casino-demo-full",
+  "name": "distributed-casino-supabase",
   "version": "1.0.0",
   "private": true,
-  "description": "Minimal distributed casino demo: API, computation server, and React interface with Crash and Mines.",
+  "description": "Distributed casino academic demo: React interface, Socket.IO game engine, Express API and Supabase PostgreSQL.",
   "scripts": {
-    "install:all": "npm install --prefix api && npm install --prefix game-server && npm install --prefix interface",
-    "dev": "node ./print-run-help.js",
-    "dev:api": "npm run dev --prefix api",
-    "dev:game": "npm run dev --prefix game-server",
+    "install:all": "npm install --prefix backend && npm install --prefix interface",
+    "dev": "node scripts/print-run-help.js",
+    "dev:backend": "npm run dev --prefix backend",
     "dev:web": "npm run dev --prefix interface"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

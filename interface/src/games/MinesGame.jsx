@@ -1,298 +1,86 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
+import { API_BASE_URL, GAME_SERVER_URL } from "../config.js";
+import { Card, DebugPanel, StatusBox, sharedStyles } from "../components/DebugPanels.jsx";
 
-const GAME_SERVER_URL = "http://localhost:3001";
-const API_BASE_URL = "http://localhost:4000";
 const BOARD_SIZE = 25;
 
 export default function MinesGame() {
-  const [socket, setSocket] = useState(null);
+  const socketRef = useRef(null);
   const [socketStatus, setSocketStatus] = useState("connecting");
   const [apiStatus, setApiStatus] = useState("checking");
   const [status, setStatus] = useState("idle");
   const [minesCount, setMinesCount] = useState(3);
-  const [externalGameId, setExternalGameId] = useState(null);
+  const [gameId, setGameId] = useState(null);
   const [revealedTiles, setRevealedTiles] = useState([]);
   const [minePositions, setMinePositions] = useState(null);
-  const [payoutMultiplier, setPayoutMultiplier] = useState(1.0);
-  const [serverSeedCommitment, setServerSeedCommitment] = useState(null);
-  const [serverSeed, setServerSeed] = useState(null);
-  const [publicSeed, setPublicSeed] = useState(null);
-  const [message, setMessage] = useState("Start a game, then pick safe tiles.");
+  const [payoutMultiplier, setPayoutMultiplier] = useState(1);
+  const [seedCommitment, setSeedCommitment] = useState(null);
+  const [proof, setProof] = useState(null);
+  const [message, setMessage] = useState("Choose the number of mines and start a game.");
   const [events, setEvents] = useState([]);
-  const [history, setHistory] = useState([]);
-  const [gameServerLogs, setGameServerLogs] = useState([]);
+  const [serverLogs, setServerLogs] = useState([]);
   const [apiLogs, setApiLogs] = useState([]);
+  const [history, setHistory] = useState([]);
 
   useEffect(() => {
-    checkApi();
-    fetchHistory();
-    fetchApiLogs();
-
-    const socketClient = io(GAME_SERVER_URL, { transports: ["websocket", "polling"] });
-    setSocket(socketClient);
-
-    socketClient.on("connect", () => {
-      setSocketStatus("connected");
-      addEvent("socket_connected", { socketId: socketClient.id });
-    });
-
-    socketClient.on("connect_error", (error) => {
-      setSocketStatus("connection error");
-      addEvent("socket_connect_error", { message: error.message });
-    });
-
-    socketClient.on("disconnect", () => {
-      setSocketStatus("disconnected");
-      addEvent("socket_disconnected", {});
-    });
-
-    socketClient.on("server_logs_snapshot", (data) => {
-      setGameServerLogs((data.logs || []).filter(isMinesOrSystem).slice(0, 12));
-    });
-
-    socketClient.on("game_server_log", (log) => {
-      if (isMinesOrSystem(log)) setGameServerLogs((oldLogs) => [log, ...oldLogs].slice(0, 12));
-    });
-
-    socketClient.on("mines_game_started", (data) => {
+    loadApiData();
+    const socket = io(GAME_SERVER_URL, { transports: ["websocket", "polling"] });
+    socketRef.current = socket;
+    socket.on("connect", () => { setSocketStatus("connected"); addEvent("socket_connected", { socketId: socket.id }); });
+    socket.on("connect_error", (error) => { setSocketStatus("connection error"); addEvent("socket_connect_error", { message: error.message }); });
+    socket.on("disconnect", () => { setSocketStatus("disconnected"); addEvent("socket_disconnected", {}); });
+    socket.on("server_logs_snapshot", ({ logs = [] }) => setServerLogs(logs.filter(isMinesOrSystem).slice(0, 12)));
+    socket.on("game_server_log", (log) => { if (isMinesOrSystem(log)) setServerLogs((old) => [log, ...old].slice(0, 12)); });
+    socket.on("mines_game_started", (data) => {
       addEvent("mines_game_started", data);
-      setStatus("active");
-      setExternalGameId(data.externalGameId);
-      setRevealedTiles([]);
-      setMinePositions(null);
-      setPayoutMultiplier(Number(data.payoutMultiplier || 1));
-      setServerSeedCommitment(data.serverSeedCommitment || null);
-      setServerSeed(null);
-      setPublicSeed(null);
-      setMessage("Game active. Mine positions are hidden in the game server.");
+      setStatus("active"); setGameId(data.externalGameId); setRevealedTiles([]); setMinePositions(null); setPayoutMultiplier(1); setSeedCommitment(data.serverSeedCommitment); setProof(null); setMessage("Game active. Mine positions are hidden on the game server.");
     });
-
-    socketClient.on("mines_tile_revealed", (data) => {
+    socket.on("mines_tile_revealed", (data) => {
       addEvent("mines_tile_revealed", data);
-      setRevealedTiles(data.revealedTiles || []);
-      setPayoutMultiplier(Number(data.payoutMultiplier || 1));
-      setMessage(`Safe tile. Current payout: ${Number(data.payoutMultiplier).toFixed(2)}x`);
+      setRevealedTiles(data.revealedTiles || []); setPayoutMultiplier(Number(data.payoutMultiplier || 1)); setMessage("Safe tile revealed. Mine positions remain hidden.");
     });
-
-    socketClient.on("mines_game_lost", async (data) => {
+    socket.on("mines_game_lost", async (data) => {
       addEvent("mines_game_lost", data);
-      applyFinishedGame(data);
-      setMessage(`You hit a mine at tile ${data.selectedTile + 1}. Game over.`);
-      await fetchHistory();
-      await fetchApiLogs();
+      setStatus("lost"); setRevealedTiles(data.revealedTiles || []); setMinePositions(data.minePositions || []); setPayoutMultiplier(0); setProof({ serverSeed: data.serverSeed, publicSeed: data.publicSeed }); setMessage("A mine was found. The server revealed the full board."); await loadApiData();
     });
-
-    socketClient.on("mines_game_cashed_out", async (data) => {
+    socket.on("mines_game_cashed_out", async (data) => {
       addEvent("mines_game_cashed_out", data);
-      applyFinishedGame(data);
-      setMessage(`Game finished with payout ${Number(data.payoutMultiplier).toFixed(2)}x.`);
-      await fetchHistory();
-      await fetchApiLogs();
+      setStatus(data.status || "cashed_out"); setRevealedTiles(data.revealedTiles || []); setMinePositions(data.minePositions || []); setPayoutMultiplier(Number(data.payoutMultiplier || 0)); setProof({ serverSeed: data.serverSeed, publicSeed: data.publicSeed }); setMessage(`Game finished at ${Number(data.payoutMultiplier || 0).toFixed(2)}x. The server revealed the board.`); await loadApiData();
     });
-
-    socketClient.on("mines_error", (data) => {
-      addEvent("mines_error", data);
-      setMessage(data.message || "Mines error.");
-    });
-
-    return () => socketClient.disconnect();
+    socket.on("mines_error", (data) => { addEvent("mines_error", data); setMessage(data.message || "Mines error."); });
+    return () => socket.disconnect();
   }, []);
 
-  function startGame() {
-    if (!socket) return;
-    socket.emit("mines_start_game", { minesCount: Number(minesCount) });
-  }
+  function startGame() { if (socketRef.current && status !== "active") socketRef.current.emit("mines_start_game", { minesCount }); }
+  function revealTile(tileIndex) { if (status === "active" && !revealedTiles.includes(tileIndex)) socketRef.current?.emit("mines_reveal_tile", { tileIndex }); }
+  function cashOut() { if (status === "active") socketRef.current?.emit("mines_cash_out"); }
 
-  function revealTile(tileIndex) {
-    if (!socket || status !== "active") return;
-    if (revealedTiles.includes(tileIndex)) return;
-    socket.emit("mines_reveal_tile", { tileIndex });
-  }
+  async function loadApiData() { await Promise.all([fetchHistory(), fetchApiLogs(), checkHealth()]); }
+  async function checkHealth() { try { const r = await fetch(`${API_BASE_URL}/health`); const d = await r.json(); setApiStatus(d.ok ? "connected" : "error"); } catch { setApiStatus("disconnected"); } }
+  async function fetchHistory() { try { const r = await fetch(`${API_BASE_URL}/api/mines/history`); const d = await r.json(); setHistory(d.games || []); } catch { setHistory([]); } }
+  async function fetchApiLogs() { try { const r = await fetch(`${API_BASE_URL}/api/logs?game=mines&source=api`); const d = await r.json(); setApiLogs(d.logs || []); } catch { setApiLogs([]); } }
+  function addEvent(name, payload) { setEvents((old) => [{ id: crypto.randomUUID(), createdAt: new Date().toISOString(), name, payload }, ...old].slice(0, 12)); }
 
-  function cashOut() {
-    if (!socket) return;
-    socket.emit("mines_cash_out");
-  }
-
-  function applyFinishedGame(data) {
-    setStatus(data.status || "finished");
-    setExternalGameId(data.externalGameId);
-    setRevealedTiles(data.revealedTiles || []);
-    setMinePositions(data.minePositions || []);
-    setPayoutMultiplier(Number(data.payoutMultiplier || 0));
-    setServerSeed(data.serverSeed || null);
-    setPublicSeed(data.publicSeed || null);
-    setServerSeedCommitment(data.serverSeedCommitment || null);
-  }
-
-  async function checkApi() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/health`);
-      const data = await response.json();
-      setApiStatus(data.ok ? "connected" : "error");
-    } catch {
-      setApiStatus("disconnected");
-    }
-  }
-
-  async function fetchHistory() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/mines/history`);
-      const data = await response.json();
-      if (data.success) {
-        setHistory(data.games || []);
-        setApiStatus("connected");
-      }
-    } catch {
-      setApiStatus("disconnected");
-      setHistory([]);
-    }
-  }
-
-  async function fetchApiLogs() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/logs?game=mines`);
-      const data = await response.json();
-      if (data.success) setApiLogs(data.logs || []);
-    } catch {
-      setApiLogs([]);
-    }
-  }
-
-  function addEvent(name, payload) {
-    setEvents((oldEvents) => [
-      { id: `${Date.now()}-${Math.random()}`, time: new Date().toLocaleTimeString(), name, payload },
-      ...oldEvents,
-    ].slice(0, 12));
-  }
-
-  const frontendKnowsMinePositions = Array.isArray(minePositions);
-
-  return (
-    <div>
-      <section style={styles.card}>
-        <h1>Mines</h1>
-        <div style={styles.statusGrid}>
-          <StatusBox label="Game Socket" value={socketStatus} />
-          <StatusBox label="API" value={apiStatus} />
-          <StatusBox label="Game Status" value={status} />
-          <StatusBox label="Knows Mines?" value={frontendKnowsMinePositions ? "yes" : "no"} />
-        </div>
-      </section>
-
-      <section style={styles.card}>
-        <h2>Controls</h2>
-        <div style={styles.controls}>
-          <label style={styles.label}>
-            Mines
-            <input
-              style={styles.input}
-              type="number"
-              min="1"
-              max="24"
-              value={minesCount}
-              disabled={status === "active"}
-              onChange={(event) => setMinesCount(event.target.value)}
-            />
-          </label>
-          <button style={styles.button} onClick={startGame}>Start New Game</button>
-          <button style={styles.buttonSecondary} onClick={cashOut} disabled={status !== "active" || revealedTiles.length === 0}>Cash Out</button>
-        </div>
-        <p>{message}</p>
-      </section>
-
-      <section style={styles.card}>
-        <h2>Board</h2>
-        <p>Payout multiplier: <strong>{Number(payoutMultiplier).toFixed(2)}x</strong></p>
-        <div style={styles.board}>
-          {Array.from({ length: BOARD_SIZE }).map((_, index) => {
-            const revealed = revealedTiles.includes(index);
-            const isMine = frontendKnowsMinePositions && minePositions.includes(index);
-            return (
-              <button
-                key={index}
-                style={{ ...styles.tile, ...(revealed ? styles.safeTile : {}), ...(isMine ? styles.mineTile : {}) }}
-                onClick={() => revealTile(index)}
-                disabled={status !== "active" || revealed}
-              >
-                {isMine ? "💣" : revealed ? "✓" : "?"}
-              </button>
-            );
-          })}
-        </div>
-        <pre style={styles.pre}>{JSON.stringify({ status, externalGameId, minesCount: Number(minesCount), revealedTiles, minePositions, payoutMultiplier, frontendKnowsMinePositions, serverSeedCommitment, serverSeed, publicSeed }, null, 2)}</pre>
-      </section>
-
-      <section style={styles.columns}>
-        <LogPanel title="Socket Events" items={events} kind="event" />
-        <MinesHistoryPanel history={history} onRefresh={fetchHistory} />
-        <LogPanel title="Game Server Logs" items={gameServerLogs} kind="server" />
-        <LogPanel title="API Logs" items={apiLogs} kind="api" onRefresh={fetchApiLogs} />
-      </section>
-    </div>
-  );
+  return <div>
+    <Card>
+      <h1 style={styles.title}>Mines</h1>
+      <p style={styles.subtitle}>The interface requests a tile; the server owns the mine positions and validates each result.</p>
+      <div style={styles.statusGrid}><StatusBox label="Game socket" value={socketStatus} /><StatusBox label="API" value={apiStatus} /><StatusBox label="Game status" value={status} /><StatusBox label="Knows mine positions?" value={minePositions ? "yes" : "no"} /></div>
+    </Card>
+    <Card>
+      <div style={styles.controls}><label>Mine count <select value={minesCount} disabled={status === "active"} onChange={(e) => setMinesCount(Number(e.target.value))} style={styles.select}>{[1,2,3,5,7,10].map((value) => <option key={value} value={value}>{value}</option>)}</select></label><button style={styles.primary} disabled={status === "active"} onClick={startGame}>Start Mines</button><button style={styles.secondary} disabled={status !== "active" || revealedTiles.length === 0} onClick={cashOut}>Cash out ({payoutMultiplier.toFixed(2)}x)</button></div>
+      <p style={styles.message}>{message}</p>
+      <div style={styles.board}>{Array.from({ length: BOARD_SIZE }, (_, tileIndex) => { const revealed = revealedTiles.includes(tileIndex); const mine = minePositions?.includes(tileIndex); return <button key={tileIndex} disabled={status !== "active" || revealed} onClick={() => revealTile(tileIndex)} style={{ ...styles.tile, ...(revealed ? styles.safeTile : {}), ...(mine ? styles.mineTile : {}) }}>{mine ? "✹" : revealed ? "✓" : "?"}</button>; })}</div>
+      <pre style={sharedStyles.pre}>{JSON.stringify({ status, gameId, minesCount, revealedTiles, minePositions, payoutMultiplier, seedCommitment, proof }, null, 2)}</pre>
+    </Card>
+    <div style={styles.columns}><DebugPanel title="Socket events" items={events} eventMode /><HistoryPanel history={history} onRefresh={fetchHistory} /><DebugPanel title="Game server logs" items={serverLogs} /><DebugPanel title="API logs" items={apiLogs} onRefresh={fetchApiLogs} /></div>
+  </div>;
 }
 
-function isMinesOrSystem(log) {
-  return log.game === "mines" || log.game === "system";
-}
-
-function StatusBox({ label, value }) {
-  const good = value === "running" || value === "connected" || value === "active" || value === "no";
-  const bad = value === "disconnected" || value === "connection error" || value === "error" || value === "lost";
-  return <div style={styles.statusBox}><span>{label}</span><strong style={{ color: good ? "#3fb950" : bad ? "#f85149" : "#d29922" }}>{value}</strong></div>;
-}
-
-function MinesHistoryPanel({ history, onRefresh }) {
-  return (
-    <div style={styles.card}>
-      <h2>Mines API History</h2>
-      <button style={styles.button} onClick={onRefresh}>Refresh</button>
-      {history.length === 0 && <p>No completed mines games stored yet.</p>}
-      {history.map((game) => (
-        <div key={game.id} style={styles.historyItem}>
-          <strong>{game.status} — {Number(game.payoutMultiplier).toFixed(2)}x</strong><br />
-          <span>{game.externalGameId}</span><br />
-          <small>mines: {game.minesCount}, revealed: {game.revealedTiles.length}</small>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function LogPanel({ title, items, kind, onRefresh }) {
-  return (
-    <div style={styles.card}>
-      <h2>{title}</h2>
-      {onRefresh && <button style={styles.button} onClick={onRefresh}>Refresh</button>}
-      {items.length === 0 && <p>No logs yet.</p>}
-      {items.map((item) => (
-        <div key={item.id} style={styles.event}>
-          <strong>{item.time || new Date(item.createdAt).toLocaleTimeString()} — {item.name || item.event}</strong>
-          <pre style={styles.smallPre}>{JSON.stringify(kind === "event" ? item.payload : item.details, null, 2)}</pre>
-        </div>
-      ))}
-    </div>
-  );
-}
+function HistoryPanel({ history, onRefresh }) { return <Card><div style={styles.historyHeading}><h2 style={styles.heading}>Mines API history</h2><button style={sharedStyles.button} onClick={onRefresh}>Refresh</button></div>{history.length === 0 && <p style={styles.muted}>No records yet.</p>}{history.map((game) => <div key={game.id} style={styles.historyItem}><strong>{game.status}</strong><br /><span>{game.minesCount} mines — {Number(game.payoutMultiplier).toFixed(2)}x</span><br /><small>{game.externalGameId}</small></div>)}</Card>; }
+function isMinesOrSystem(log) { return log.game === "mines" || log.game === "system"; }
 
 const styles = {
-  card: { background: "#161b22", border: "1px solid #30363d", borderRadius: 12, padding: 20, marginBottom: 20 },
-  statusGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginTop: 20 },
-  statusBox: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 },
-  controls: { display: "flex", gap: 12, alignItems: "end", flexWrap: "wrap" },
-  label: { display: "flex", flexDirection: "column", gap: 6, fontWeight: 700 },
-  input: { background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d", borderRadius: 8, padding: "10px 12px", width: 90 },
-  button: { background: "#238636", color: "white", border: 0, borderRadius: 8, padding: "10px 14px", cursor: "pointer", fontWeight: 700, marginBottom: 8 },
-  buttonSecondary: { background: "#8957e5", color: "white", border: 0, borderRadius: 8, padding: "10px 14px", cursor: "pointer", fontWeight: 700, marginBottom: 8 },
-  board: { display: "grid", gridTemplateColumns: "repeat(5, 64px)", gap: 10, margin: "20px 0" },
-  tile: { width: 64, height: 64, borderRadius: 8, border: "1px solid #30363d", background: "#21262d", color: "white", fontSize: 24, cursor: "pointer" },
-  safeTile: { background: "#238636" },
-  mineTile: { background: "#da3633" },
-  pre: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 10, padding: 12, overflowX: "auto" },
-  smallPre: { background: "#0d1117", borderRadius: 8, padding: 8, fontSize: 12, overflowX: "auto" },
-  columns: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20 },
-  event: { borderTop: "1px solid #30363d", marginTop: 12, paddingTop: 12 },
-  historyItem: { borderTop: "1px solid #30363d", marginTop: 12, paddingTop: 12, wordBreak: "break-all" },
+  title: { marginTop: 0, fontSize: 32 }, subtitle: { color: "#8b949e" }, statusGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }, controls: { display: "flex", flexWrap: "wrap", alignItems: "end", gap: 12 }, select: { marginLeft: 8, background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3", borderRadius: 8, padding: 9 }, primary: { border: 0, borderRadius: 8, background: "#238636", color: "white", padding: "10px 14px", cursor: "pointer", fontWeight: 700 }, secondary: { border: "1px solid #30363d", borderRadius: 8, background: "#0d1117", color: "#e6edf3", padding: "10px 14px", cursor: "pointer", fontWeight: 700 }, message: { padding: 12, background: "#0d1117", borderRadius: 8, border: "1px solid #30363d" }, board: { display: "grid", gridTemplateColumns: "repeat(5, minmax(46px, 70px))", gap: 10, justifyContent: "start", margin: "18px 0" }, tile: { aspectRatio: "1", border: "1px solid #30363d", borderRadius: 10, background: "#21262d", color: "#e6edf3", fontSize: 20, cursor: "pointer", fontWeight: 900 }, safeTile: { background: "#238636" }, mineTile: { background: "#da3633" }, columns: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20 }, historyHeading: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }, heading: { margin: 0, fontSize: 20 }, muted: { color: "#8b949e" }, historyItem: { borderTop: "1px solid #30363d", paddingTop: 12, marginTop: 12, overflowWrap: "anywhere" },
 };

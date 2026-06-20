@@ -1,83 +1,29 @@
-# Distributed Casino Demo: Crash + Mines
+# Distributed Casino Demo — Supabase deployment version
 
-This is a clean test project with three independent parts:
+Academic simulator with three games: **Crash**, **Mines**, and **Double**.
 
-```text
-api/           data and persistence service
-game-server/   computation and real-time Socket.IO service
-interface/     React interface
-```
+## Architecture
 
-It demonstrates the split expected in a distributed systems project:
+- `interface/`: React/Vite browser interface. Deploy to Vercel.
+- `backend/`: one persistent Node.js web service exposing both REST and Socket.IO. Deploy to Render.
+- `supabase/`: PostgreSQL schema. Run once in the Supabase SQL Editor.
 
-- **Interface**: renders state and sends user intentions.
-- **Computation server**: owns hidden game state and real-time decisions.
-- **API**: persists completed games and exposes history/logs.
+The server keeps authoritative game secrets. The frontend only renders state and animations.
 
-## Games included
+## Important security note
 
-### Crash
+No database password, Supabase key, token, or `.env` file is included in this repository. Keep all secrets out of Git. The interface does **not** connect directly to Supabase.
 
-The frontend does not know the crash point while the round is active. The game server emits public multiplier updates and reveals the crash point only in `round_crashed`.
+## Local execution
 
-### Mines
+1. Copy `backend/.env.example` to `backend/.env`.
+2. Set `DATABASE_URL` and `DATABASE_SSL=false` for local use.
+3. Copy `interface/.env.example` to `interface/.env`.
+4. Run `npm run install:all` at the repository root.
+5. In terminal 1 run `npm run dev:backend`.
+6. In terminal 2 run `npm run dev:web`.
+7. Open `http://localhost:5173`.
 
-The frontend does not know mine positions while the game is active. The game server receives tile selections, decides whether the tile is safe or a mine, and reveals mine positions only after loss or cash out.
+## Production deployment
 
-## Logs for the final paper
-
-Both games show:
-
-- Socket events received by the interface.
-- Game server logs emitted from the computation service.
-- API logs fetched from the persistence service.
-- API history records.
-
-These panels are useful evidence for explaining component responsibilities and communication flow in the final report.
-
-## Install
-
-```bash
-cd distributed-casino-demo-full
-npm run install:all
-```
-
-## Run
-
-Use three terminals.
-
-Terminal 1:
-
-```bash
-npm run dev:api
-```
-
-Terminal 2:
-
-```bash
-npm run dev:game
-```
-
-Terminal 3:
-
-```bash
-npm run dev:web
-```
-
-Open:
-
-```text
-http://localhost:5173
-```
-
-## Ports
-
-```text
-API:         http://localhost:4000
-Game server: http://localhost:3001
-Interface:   http://localhost:5173
-```
-
-## Notes
-
-This is a classroom/demo implementation. It is intentionally simple and uses JSON files as storage. It is not a production gambling implementation.
+See the deployment steps supplied with this migration. In production, both `VITE_BACKEND_URL` and CORS must point at the final Render/Vercel URLs.

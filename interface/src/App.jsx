@@ -7,47 +7,31 @@ export default function App() {
   const [selectedGame, setSelectedGame] = useState("crash");
 
   return (
-    <main style={styles.app}>
-      <aside style={styles.sidebar}>
+    <main className="app-shell" style={styles.app}>
+      <aside className="app-sidebar" style={styles.sidebar}>
         <h2 style={styles.logo}>Games</h2>
-
-        <button
-          style={{
-            ...styles.navButton,
-            ...(selectedGame === "crash" ? styles.activeButton : {}),
-          }}
-          onClick={() => setSelectedGame("crash")}
-        >
-          Crash
-        </button>
-
-        <button
-          style={{
-            ...styles.navButton,
-            ...(selectedGame === "mines" ? styles.activeButton : {}),
-          }}
-          onClick={() => setSelectedGame("mines")}
-        >
-          Mines
-        </button>
-
-        <button
-          style={{
-            ...styles.navButton,
-            ...(selectedGame === "double" ? styles.activeButton : {}),
-          }}
-          onClick={() => setSelectedGame("double")}
-        >
-          Double
-        </button>
+        <NavButton label="Crash" active={selectedGame === "crash"} onClick={() => setSelectedGame("crash")} />
+        <NavButton label="Mines" active={selectedGame === "mines"} onClick={() => setSelectedGame("mines")} />
+        <NavButton label="Double" active={selectedGame === "double"} onClick={() => setSelectedGame("double")} />
       </aside>
-
-      <section style={styles.content}>
+      <section className="app-content" style={styles.content}>
         {selectedGame === "crash" && <CrashGame />}
         {selectedGame === "mines" && <MinesGame />}
         {selectedGame === "double" && <DoubleGame />}
       </section>
     </main>
+  );
+}
+
+function NavButton({ label, active, onClick }) {
+  return (
+    <button
+      className="app-nav-button"
+      style={{ ...styles.navButton, ...(active ? styles.activeButton : {}) }}
+      onClick={onClick}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -57,21 +41,18 @@ const styles = {
     display: "flex",
     background: "#0d1117",
     color: "#e6edf3",
-    fontFamily: "Arial, sans-serif",
   },
   sidebar: {
     width: 220,
+    flexShrink: 0,
     background: "#161b22",
     borderRight: "1px solid #30363d",
     padding: 20,
     display: "flex",
     flexDirection: "column",
     gap: 12,
-    boxSizing: "border-box",
   },
-  logo: {
-    margin: "0 0 20px 0",
-  },
+  logo: { margin: "0 0 20px" },
   navButton: {
     width: "100%",
     padding: "12px 14px",
@@ -81,7 +62,6 @@ const styles = {
     color: "#e6edf3",
     cursor: "pointer",
     textAlign: "left",
-    fontSize: 16,
     fontWeight: 700,
   },
   activeButton: {
@@ -91,8 +71,7 @@ const styles = {
   },
   content: {
     flex: 1,
+    minWidth: 0,
     padding: 24,
-    boxSizing: "border-box",
-    overflowX: "hidden",
   },
 };

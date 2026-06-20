@@ -13,6 +13,7 @@ app.use(express.json());
 
 const dataDir = path.join(__dirname, "..", "data");
 const roundsFile = path.join(dataDir, "rounds.json");
+const doubleRoundsFile = path.join(dataDir, "double-rounds.json");
 const minesGamesFile = path.join(dataDir, "mines-games.json");
 const apiLogsFile = path.join(dataDir, "api-logs.json");
 
@@ -156,6 +157,105 @@ app.get("/api/mines/history", (req, res) => {
   res.json({ success: true, games });
 });
 
+app.post("/api/internal/double/rounds", requireGameServerToken, (req, res) => {
+  const {
+    externalRoundId,
+    selectedColor,
+    resultNumber,
+    resultColor,
+    won,
+    payoutMultiplier,
+    serverSeed,
+    publicSeed,
+    serverSeedCommitment,
+    startedAt,
+    finishedAt,
+  } = req.body;
+
+  const validColors = ["red", "black", "green"];
+
+  const valid =
+    externalRoundId &&
+    validColors.includes(selectedColor) &&
+    Number.isInteger(Number(resultNumber)) &&
+    validColors.includes(resultColor) &&
+    typeof won === "boolean" &&
+    typeof payoutMultiplier === "number" &&
+    serverSeed &&
+    publicSeed &&
+    serverSeedCommitment &&
+    startedAt &&
+    finishedAt;
+
+  if (!valid) {
+    logApi("double", "store_round_rejected", {
+      reason: "invalid_fields",
+      body: req.body,
+    });
+
+    return res.status(422).json({
+      success: false,
+      message: "Invalid Double round data.",
+    });
+  }
+
+  const rounds = readJson(doubleRoundsFile);
+
+  if (rounds.some((round) => round.externalRoundId === externalRoundId)) {
+    logApi("double", "store_round_duplicate", { externalRoundId });
+
+    return res.status(409).json({
+      success: false,
+      message: "Double round already exists.",
+    });
+  }
+
+  const round = {
+    id: rounds.length + 1,
+    externalRoundId,
+    selectedColor,
+    resultNumber: Number(resultNumber),
+    resultColor,
+    won,
+    payoutMultiplier: Number(payoutMultiplier),
+    serverSeed,
+    publicSeed,
+    serverSeedCommitment,
+    startedAt,
+    finishedAt,
+    createdAt: new Date().toISOString(),
+  };
+
+  rounds.unshift(round);
+  writeJson(doubleRoundsFile, rounds.slice(0, 100));
+
+  logApi("double", "round_persisted", {
+    externalRoundId,
+    selectedColor,
+    resultNumber: Number(resultNumber),
+    resultColor,
+    won,
+  });
+
+  res.status(201).json({
+    success: true,
+    round,
+  });
+});
+
+app.get("/api/double/history", (req, res) => {
+  const rounds = readJson(doubleRoundsFile).slice(0, 10);
+
+  logApi("double", "history_requested", {
+    count: rounds.length,
+  });
+
+  res.json({
+    success: true,
+    rounds,
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`API running on http://localhost:${PORT}`);
   console.log("Role: data/persistence service");
@@ -179,7 +279,12 @@ function requireGameServerToken(req, res, next) {
 
 function ensureDataFiles() {
   fs.mkdirSync(dataDir, { recursive: true });
-  for (const file of [roundsFile, minesGamesFile, apiLogsFile]) {
+  for (const file of [
+    roundsFile,
+    minesGamesFile,
+    doubleRoundsFile,
+    apiLogsFile,
+  ]) {
     if (!fs.existsSync(file)) {
       fs.writeFileSync(file, "[]\n", "utf8");
     }

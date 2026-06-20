@@ -13,6 +13,7 @@ const COOLDOWN_MS = 3000;
 const MULTIPLIER_UPDATE_MS = 100;
 const CRASH_GROWTH_RATE = 0.06;
 const MINES_BOARD_SIZE = 25;
+const DOUBLE_SPIN_MS = 1400;
 
 const io = new Server(PORT, {
   cors: {
@@ -54,6 +55,10 @@ io.on("connection", (socket) => {
 
   socket.on("mines_cash_out", () => {
     cashOutMinesGame(socket);
+  });
+
+  socket.on("double_start_round", (payload = {}) => {
+    startDoubleRound(socket, payload);
   });
 });
 
@@ -557,6 +562,197 @@ async function saveMinesGameToApi(game) {
     });
   } catch (error) {
     logServer("mines", "api_persist_error", {
+      message: error.message,
+    });
+  }
+}
+
+function startDoubleRound(socket, payload) {
+  const selectedColor = String(payload.selectedColor || "").toLowerCase();
+  const validColors = ["red", "black", "green"];
+
+  if (!validColors.includes(selectedColor)) {
+    socket.emit("double_error", {
+      message: "Choose red, black, or green.",
+    });
+
+    logServer("double", "round_rejected", {
+      socketId: socket.id,
+      reason: "invalid_color",
+      selectedColor,
+    });
+
+    return;
+  }
+
+  if (socket.data.doubleRound?.status === "spinning") {
+    socket.emit("double_error", {
+      message: "A Double round is already spinning.",
+    });
+
+    logServer("double", "round_rejected", {
+      socketId: socket.id,
+      reason: "already_spinning",
+    });
+
+    return;
+  }
+
+  const secret = generateDoubleSecret();
+
+  const round = {
+    status: "spinning",
+    externalRoundId: crypto.randomUUID(),
+    selectedColor,
+    resultNumber: secret.resultNumber,
+    resultColor: secret.resultColor,
+    won: null,
+    payoutMultiplier: 0,
+    startedAtMs: Date.now(),
+    finishedAtMs: null,
+    serverSeed: secret.serverSeed,
+    publicSeed: secret.publicSeed,
+    serverSeedCommitment: secret.serverSeedCommitment,
+  };
+
+  socket.data.doubleRound = round;
+
+  logServer("double", "round_started", {
+    socketId: socket.id,
+    externalRoundId: round.externalRoundId,
+    selectedColor,
+    serverSeedCommitment: round.serverSeedCommitment,
+    spinDurationMs: DOUBLE_SPIN_MS,
+    note: "Result stays private in the game server until the spin finishes.",
+  });
+
+  socket.emit("double_round_started", {
+    externalRoundId: round.externalRoundId,
+    selectedColor,
+    spinDurationMs: DOUBLE_SPIN_MS,
+    serverSeedCommitment: round.serverSeedCommitment,
+    frontendKnowsOutcome: false,
+  });
+
+  setTimeout(async () => {
+    if (socket.data.doubleRound !== round || round.status !== "spinning") {
+      return;
+    }
+
+    round.status = "finished";
+    round.finishedAtMs = Date.now();
+    round.won = round.selectedColor === round.resultColor;
+    round.payoutMultiplier = round.won
+      ? getDoublePayout(round.selectedColor)
+      : 0;
+
+    logServer("double", "round_finished", {
+      externalRoundId: round.externalRoundId,
+      selectedColor: round.selectedColor,
+      resultNumber: round.resultNumber,
+      resultColor: round.resultColor,
+      won: round.won,
+      payoutMultiplier: round.payoutMultiplier,
+      note: "Result revealed after server-side round completion.",
+    });
+
+    socket.emit("double_round_finished", publicDoubleRound(round));
+
+    await saveDoubleRoundToApi(round);
+  }, DOUBLE_SPIN_MS);
+}
+
+function generateDoubleSecret() {
+  const serverSeed = crypto.randomBytes(32).toString("hex");
+  const publicSeed = crypto.randomUUID();
+
+  const serverSeedCommitment = crypto
+    .createHash("sha256")
+    .update(serverSeed)
+    .digest("hex");
+
+  const hash = crypto
+    .createHmac("sha256", serverSeed)
+    .update(publicSeed)
+    .digest("hex");
+
+  // 0 green, 1-7 red, 8-14 black.
+  const resultNumber = Number.parseInt(hash.slice(0, 8), 16) % 15;
+
+  return {
+    serverSeed,
+    publicSeed,
+    serverSeedCommitment,
+    resultNumber,
+    resultColor: getDoubleColor(resultNumber),
+  };
+}
+
+function getDoubleColor(number) {
+  if (number === 0) return "green";
+  return number <= 7 ? "red" : "black";
+}
+
+function getDoublePayout(color) {
+  return color === "green" ? 14 : 2;
+}
+
+function publicDoubleRound(round) {
+  return {
+    externalRoundId: round.externalRoundId,
+    selectedColor: round.selectedColor,
+    resultNumber: round.resultNumber,
+    resultColor: round.resultColor,
+    won: round.won,
+    payoutMultiplier: round.payoutMultiplier,
+    serverSeed: round.serverSeed,
+    publicSeed: round.publicSeed,
+    serverSeedCommitment: round.serverSeedCommitment,
+    frontendKnowsOutcome: true,
+  };
+}
+
+async function saveDoubleRoundToApi(round) {
+  try {
+    logServer("double", "api_persist_request", {
+      externalRoundId: round.externalRoundId,
+    });
+
+    const response = await fetch(`${API_BASE_URL}/api/internal/double/rounds`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Game-Server-Token": GAME_SERVER_TOKEN,
+      },
+      body: JSON.stringify({
+        externalRoundId: round.externalRoundId,
+        selectedColor: round.selectedColor,
+        resultNumber: round.resultNumber,
+        resultColor: round.resultColor,
+        won: round.won,
+        payoutMultiplier: round.payoutMultiplier,
+        serverSeed: round.serverSeed,
+        publicSeed: round.publicSeed,
+        serverSeedCommitment: round.serverSeedCommitment,
+        startedAt: new Date(round.startedAtMs).toISOString(),
+        finishedAt: new Date(round.finishedAtMs).toISOString(),
+      }),
+    });
+
+    if (!response.ok) {
+      logServer("double", "api_persist_failed", {
+        externalRoundId: round.externalRoundId,
+        status: response.status,
+      });
+
+      return;
+    }
+
+    logServer("double", "api_persist_success", {
+      externalRoundId: round.externalRoundId,
+    });
+  } catch (error) {
+    logServer("double", "api_persist_error", {
       message: error.message,
     });
   }

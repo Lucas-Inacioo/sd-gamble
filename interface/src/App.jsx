@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import CrashGame from "./games/CrashGame.jsx";
 import MinesGame from "./games/MinesGame.jsx";
+import DoubleGame from "./games/DoubleGame.jsx";
 
 export default function App() {
   const [selectedGame, setSelectedGame] = useState("crash");
@@ -29,11 +30,22 @@ export default function App() {
         >
           Mines
         </button>
+
+        <button
+          style={{
+            ...styles.navButton,
+            ...(selectedGame === "double" ? styles.activeButton : {}),
+          }}
+          onClick={() => setSelectedGame("double")}
+        >
+          Double
+        </button>
       </aside>
 
       <section style={styles.content}>
         {selectedGame === "crash" && <CrashGame />}
         {selectedGame === "mines" && <MinesGame />}
+        {selectedGame === "double" && <DoubleGame />}
       </section>
     </main>
   );

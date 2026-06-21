@@ -1,27 +1,43 @@
+/**
+ * PostgreSQL access layer.
+ *
+ * This module is intentionally small: game rules stay in `index.js` while all
+ * SQL statements live here. The frontend never imports or receives database
+ * credentials; only the backend uses this connection pool.
+ */
 const { Pool } = require("pg");
 
 const databaseUrl = process.env.DATABASE_URL;
 
 if (!databaseUrl) {
-  throw new Error("DATABASE_URL is required. Add it to backend/.env or your hosting provider variables.");
+  throw new Error(
+    "DATABASE_URL is required. Add it to backend/.env or your hosting provider variables."
+  );
 }
 
+/**
+ * A modest pool is sufficient for the classroom deployment and prevents a
+ * single Render instance from opening too many connections to Supabase.
+ */
 const pool = new Pool({
   connectionString: databaseUrl,
   ssl: process.env.DATABASE_SSL === "false" ? false : { rejectUnauthorized: false },
   max: 5,
-  idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 15000,
+  idleTimeoutMillis: 10_000,
+  connectionTimeoutMillis: 15_000,
 });
 
+/** Executes a parameterized SQL query. Always pass values separately from SQL. */
 async function query(text, values = []) {
   return pool.query(text, values);
 }
 
+/** Verifies that PostgreSQL is reachable; used by startup and `/health`. */
 async function checkDatabase() {
   await query("select 1 as ok");
 }
 
+/** Persists a structured log entry used by the technical/debug panels. */
 async function addLog(source, game, event, details = {}) {
   await query(
     `
@@ -32,6 +48,7 @@ async function addLog(source, game, event, details = {}) {
   );
 }
 
+/** Saves one completed Crash round. The unique external ID makes retries safe. */
 async function saveCrashRound(round) {
   await query(
     `
@@ -59,6 +76,7 @@ async function saveCrashRound(round) {
   );
 }
 
+/** Saves a completed Mines game, including the board revealed after completion. */
 async function saveMinesGame(game) {
   await query(
     `
@@ -94,6 +112,7 @@ async function saveMinesGame(game) {
   );
 }
 
+/** Saves the final, backend-authoritative outcome of a Double round. */
 async function saveDoubleRound(round) {
   await query(
     `

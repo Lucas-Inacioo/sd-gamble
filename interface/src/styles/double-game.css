@@ -1,0 +1,134 @@
+/** Double-specific color choices, reel and animation. */
+.double-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+
+.double-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+  min-height: 82px;
+  color: #fff;
+  font-size: 1.125rem;
+  text-align: center;
+  text-transform: capitalize;
+  cursor: pointer;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--radius-md);
+  transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+}
+
+.double-choice:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+
+.double-choice--red,
+.double-number--red,
+.double-ball--red {
+  background: #da3633;
+}
+
+.double-choice--black,
+.double-number--black,
+.double-ball--black {
+  background: #21262d;
+}
+
+.double-choice--green,
+.double-number--green,
+.double-ball--green {
+  background: var(--color-primary);
+}
+
+.double-choice--selected,
+.double-number--current {
+  box-shadow: 0 0 0 3px #58a6ff;
+}
+
+.double-choice:disabled {
+  opacity: 0.55;
+}
+
+.double-reel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  gap: var(--space-4);
+  text-align: center;
+  background: var(--color-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.double-ball {
+  display: grid;
+  width: 118px;
+  height: 118px;
+  color: #fff;
+  font-size: 3.5rem;
+  font-weight: 900;
+  place-items: center;
+  border: 5px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+}
+
+.double-ball--spinning {
+  animation: double-spin-pulse 0.18s linear infinite;
+}
+
+.double-numbers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 18px 0;
+}
+
+.double-number {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  color: #fff;
+  font-weight: 800;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+}
+
+.double-number--result {
+  box-shadow: 0 0 0 3px #fff;
+}
+
+.double-history-result--red {
+  color: #f85149;
+}
+
+.double-history-result--black {
+  color: #c9d1d9;
+}
+
+.double-history-result--green {
+  color: var(--color-success);
+}
+
+@keyframes double-spin-pulse {
+  0% {
+    transform: scale(0.9) rotate(-8deg);
+  }
+  50% {
+    transform: scale(1.08) rotate(8deg);
+  }
+  100% {
+    transform: scale(0.9) rotate(-8deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .double-ball--spinning {
+    animation: none;
+  }
+}

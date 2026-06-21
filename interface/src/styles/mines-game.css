@@ -1,0 +1,56 @@
+/** Mines-specific controls and board states. */
+.mines-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.mines-select-label {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--color-muted);
+  font-weight: 700;
+}
+
+.mines-board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(46px, 70px));
+  gap: 10px;
+  justify-content: start;
+  margin: 18px 0;
+}
+
+.mines-tile {
+  aspect-ratio: 1;
+  color: var(--color-text);
+  font-size: 1.25rem;
+  font-weight: 900;
+  cursor: pointer;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.mines-tile:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: #30363d;
+}
+
+.mines-tile--safe {
+  background: var(--color-primary);
+  border-color: var(--color-primary-hover);
+}
+
+.mines-tile--mine {
+  background: #da3633;
+  border-color: #f85149;
+}
+
+@media (max-width: 420px) {
+  .mines-board {
+    grid-template-columns: repeat(5, minmax(42px, 1fr));
+  }
+}

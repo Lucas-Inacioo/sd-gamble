@@ -1,3 +1,14 @@
+/**
+ * Distributed Casino Backend
+ *
+ * Responsibilities:
+ * - exposes REST endpoints for health, history and audit logs;
+ * - accepts Socket.IO game actions and emits real-time state changes;
+ * - keeps all secret outcomes on the server until a round is complete;
+ * - persists finished rounds and diagnostics through the PostgreSQL access layer.
+ *
+ * This is an academic simulator. All bets use demonstration credits only.
+ */
 require("dotenv").config();
 
 const crypto = require("crypto");

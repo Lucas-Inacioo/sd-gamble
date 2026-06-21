@@ -1,99 +1,98 @@
 import React from "react";
 
-const styles = {
-  card: {
-    background: "#161b22",
-    border: "1px solid #30363d",
-    borderRadius: 14,
-    padding: 20,
-    marginBottom: 20,
-    boxShadow: "0 10px 28px rgba(0,0,0,0.22)",
-  },
-  statusBox: {
-    background: "#0d1117",
-    border: "1px solid #30363d",
-    borderRadius: 10,
-    padding: 12,
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
-  label: { color: "#8b949e", fontSize: 13 },
-  headingRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    marginBottom: 10,
-  },
-  heading: { margin: 0, fontSize: 20 },
-  button: {
-    border: 0,
-    borderRadius: 8,
-    padding: "9px 12px",
-    background: "#238636",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 700,
-  },
-  muted: { color: "#8b949e" },
-  item: {
-    borderTop: "1px solid #30363d",
-    marginTop: 12,
-    paddingTop: 12,
-    overflowWrap: "anywhere",
-  },
-  pre: {
-    background: "#0d1117",
-    borderRadius: 8,
-    border: "1px solid #30363d",
-    padding: 9,
-    margin: "8px 0 0",
-    overflowX: "auto",
-    fontSize: 12,
-  },
-};
+/**
+ * Standard card used across the interface.
+ * Component code contains structure and semantics only; visual rules live in
+ * `src/styles/components.css`.
+ */
+export function Card({ children, compact = false, className = "" }) {
+  const classes = ["card", compact && "card--compact", className]
+    .filter(Boolean)
+    .join(" ");
 
+  return <section className={classes}>{children}</section>;
+}
+
+/**
+ * Displays a small, accessible status summary.
+ * The visual status is intentionally accompanied by text so color is not the
+ * only source of meaning.
+ */
 export function StatusBox({ label, value }) {
   const normalized = String(value || "unknown").toLowerCase();
-  const good = ["connected", "active", "running", "finished", "yes", "no", "won", "cashed_out"].includes(normalized);
-  const bad = ["disconnected", "error", "connection error", "lost"].includes(normalized);
+  const positiveValues = [
+    "connected",
+    "active",
+    "running",
+    "finished",
+    "yes",
+    "won",
+    "cashed_out",
+  ];
+  const negativeValues = [
+    "disconnected",
+    "error",
+    "connection error",
+    "lost",
+  ];
+
+  const tone = positiveValues.includes(normalized)
+    ? "good"
+    : negativeValues.includes(normalized)
+      ? "bad"
+      : "neutral";
 
   return (
-    <div style={styles.statusBox}>
-      <span style={styles.label}>{label}</span>
-      <strong style={{ color: good ? "#3fb950" : bad ? "#f85149" : "#d29922" }}>
-        {value}
+    <div className="status-box">
+      <span className="status-box__label">{label}</span>
+      <strong className={`status-box__value status-box__value--${tone}`}>
+        {value || "unknown"}
       </strong>
     </div>
   );
 }
 
-export function DebugPanel({ title, items, eventMode = false, onRefresh }) {
+/**
+ * Reusable panel for WebSocket events, API logs and game-server logs.
+ * The component is intentionally generic so every game presents technical
+ * data in the same format.
+ */
+export function DebugPanel({ title, items = [], eventMode = false, onRefresh }) {
   return (
-    <section style={styles.card}>
-      <div style={styles.headingRow}>
-        <h2 style={styles.heading}>{title}</h2>
-        {onRefresh && <button style={styles.button} onClick={onRefresh}>Refresh</button>}
+    <Card className="debug-panel">
+      <div className="panel-heading-row">
+        <h2 className="section-heading">{title}</h2>
+        {onRefresh && (
+          <button type="button" className="button button--primary" onClick={onRefresh}>
+            Refresh
+          </button>
+        )}
       </div>
-      {items.length === 0 && <p style={styles.muted}>No records yet.</p>}
+
+      {items.length === 0 && (
+        <p className="debug-panel__empty">No records yet.</p>
+      )}
+
       {items.map((item, index) => {
         const createdAt = item.time || item.createdAt;
         const label = item.name || item.event || "record";
         const payload = eventMode ? item.payload : item.details;
+        const timestamp = createdAt
+          ? new Date(createdAt).toLocaleTimeString()
+          : null;
+
         return (
-          <div key={item.id || `${label}-${index}`} style={styles.item}>
-            <strong>{createdAt ? new Date(createdAt).toLocaleTimeString() : ""} {createdAt ? "— " : ""}{label}</strong>
-            <pre style={styles.pre}>{JSON.stringify(payload || item, null, 2)}</pre>
-          </div>
+          <article key={item.id || `${label}-${index}`} className="debug-panel__item">
+            <strong className="debug-panel__event-name">
+              {timestamp && <span className="debug-panel__time">{timestamp} — </span>}
+              {label}
+            </strong>
+            <pre className="json-view debug-panel__payload">
+              {JSON.stringify(payload || item, null, 2)}
+            </pre>
+          </article>
         );
       })}
-    </section>
+    </Card>
   );
 }
-
-export function Card({ children, style }) {
-  return <section style={{ ...styles.card, ...style }}>{children}</section>;
-}
-
-export const sharedStyles = styles;

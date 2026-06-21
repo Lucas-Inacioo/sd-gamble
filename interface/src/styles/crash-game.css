@@ -1,0 +1,411 @@
+/* -------------------------------------------------------------------------- */
+/* Crash page layout                                                          */
+/* -------------------------------------------------------------------------- */
+
+.crash-game {
+  display: grid;
+  gap: 1rem;
+}
+
+.crash-header,
+.crash-bet-header,
+.history-heading-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.game-title,
+.section-heading {
+  margin: 0;
+  color: var(--text-primary, #f0f6fc);
+}
+
+.game-title {
+  font-size: clamp(1.8rem, 4vw, 2.4rem);
+}
+
+.section-heading {
+  font-size: 1.15rem;
+}
+
+.game-subtitle,
+.muted-text {
+  color: var(--text-muted, #8b949e);
+}
+
+.game-subtitle {
+  margin: 0.4rem 0 0;
+  line-height: 1.5;
+}
+
+.crash-badges,
+.crash-results,
+.crash-bet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.crash-badges {
+  justify-content: flex-end;
+}
+
+.crash-badge,
+.crash-result-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.8rem;
+  padding: 0.2rem 0.65rem;
+  border: 1px solid var(--border-color, #30363d);
+  border-radius: 999px;
+  background: var(--surface-secondary, #161b22);
+  color: var(--text-muted, #c9d1d9);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.crash-results {
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.crash-result-pill--safe {
+  border-color: rgba(46, 160, 67, 0.55);
+  background: rgba(46, 160, 67, 0.14);
+  color: #7ee787;
+}
+
+.crash-result-pill--low {
+  border-color: rgba(248, 81, 73, 0.55);
+  background: rgba(248, 81, 73, 0.12);
+  color: #ff7b72;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Betting controls                                                           */
+/* -------------------------------------------------------------------------- */
+
+.crash-bet-controls {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(190px, 1fr) auto;
+  align-items: end;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.form-label {
+  display: grid;
+  gap: 0.45rem;
+  color: var(--text-muted, #c9d1d9);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.form-control {
+  width: 100%;
+  min-height: 2.55rem;
+  box-sizing: border-box;
+  border: 1px solid var(--border-color, #30363d);
+  border-radius: 0.55rem;
+  background: var(--surface-secondary, #0d1117);
+  color: var(--text-primary, #f0f6fc);
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+}
+
+.form-control:focus {
+  outline: 2px solid rgba(88, 166, 255, 0.75);
+  outline-offset: 2px;
+}
+
+.form-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.crash-bet-actions {
+  align-items: center;
+  min-height: 2.55rem;
+}
+
+.message-box {
+  margin: 1rem 0 0;
+  border-left: 3px solid var(--accent-color, #58a6ff);
+  border-radius: 0.25rem;
+  background: rgba(88, 166, 255, 0.08);
+  color: var(--text-primary, #c9d1d9);
+  padding: 0.75rem 0.9rem;
+  line-height: 1.5;
+}
+
+.json-view {
+  max-height: 18rem;
+  overflow: auto;
+  margin: 1rem 0 0;
+  border: 1px solid var(--border-color, #30363d);
+  border-radius: 0.6rem;
+  background: #0d1117;
+  color: #c9d1d9;
+  padding: 0.85rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Fixed Crash flight visual                                                  */
+/* -------------------------------------------------------------------------- */
+
+.crash-flight {
+  position: relative;
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid var(--border-color, #30363d);
+  border-radius: 1rem;
+  background: #0d1117;
+}
+
+.crash-flight-svg {
+  display: block;
+  width: 100%;
+  height: 420px;
+}
+
+.crash-flight-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.crash-flight-status {
+  position: absolute;
+  top: 1.2rem;
+  left: 1.2rem;
+  color: #c9d1d9;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.crash-flight-status--waiting {
+  color: #f2cc60;
+}
+
+.crash-flight-status--active {
+  color: #58a6ff;
+}
+
+.crash-flight-status--crashed {
+  color: #ff7b72;
+}
+
+.crash-flight-multiplier {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  color: #f0f6fc;
+  font-size: clamp(3.4rem, 9vw, 7.2rem);
+  font-weight: 800;
+  letter-spacing: -0.07em;
+  line-height: 1;
+  text-shadow: 0 0.65rem 2rem rgba(0, 0, 0, 0.55);
+  transform: translate(-50%, -50%);
+}
+
+.crash-flight-caption {
+  position: absolute;
+  right: 1.2rem;
+  bottom: 0.85rem;
+  left: 1.2rem;
+  z-index: 2;
+  margin: 0;
+  color: rgba(201, 209, 217, 0.8);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.crash-flight-route-glow {
+  fill: none;
+  stroke: rgba(88, 166, 255, 0.23);
+  stroke-linecap: round;
+  stroke-width: 18;
+}
+
+.crash-flight-route-line {
+  fill: none;
+  stroke: url(#crash-flight-route);
+  stroke-dasharray: 12 13;
+  stroke-linecap: round;
+  stroke-width: 4.5;
+}
+
+.crash-flight-milestones text {
+  fill: rgba(201, 209, 217, 0.7);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.crash-flight-rocket {
+  opacity: 1;
+  transition: opacity 140ms ease;
+}
+
+.crash-flight-rocket--crashed {
+  opacity: 0;
+}
+
+.crash-flight-flame {
+  fill: #f2cc60;
+  filter: drop-shadow(0 0 8px rgba(242, 204, 96, 0.85));
+  transform-origin: center;
+  animation: crash-flight-flame-pulse 150ms ease-in-out infinite alternate;
+}
+
+.crash-flight-rocket-body {
+  fill: #58a6ff;
+  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.38));
+}
+
+.crash-flight-rocket-fin {
+  fill: #2f81f7;
+}
+
+.crash-flight-rocket-window {
+  fill: #0d1117;
+  stroke: #8ecbff;
+  stroke-width: 3;
+}
+
+.crash-flight-explosion {
+  animation: crash-flight-explosion-pulse 380ms ease-out infinite alternate;
+}
+
+.crash-flight-explosion-core {
+  fill: #f2cc60;
+  opacity: 0.92;
+}
+
+.crash-flight-explosion-rays {
+  fill: #ff7b72;
+  opacity: 0.9;
+}
+
+/* The rocket is intentionally dimmed only before a round starts. */
+.crash-flight--waiting .crash-flight-rocket,
+.crash-flight--initial .crash-flight-rocket {
+  opacity: 0.48;
+}
+
+.crash-flight--waiting .crash-flight-flame,
+.crash-flight--initial .crash-flight-flame {
+  animation-play-state: paused;
+  opacity: 0.45;
+}
+
+@keyframes crash-flight-flame-pulse {
+  from {
+    opacity: 0.68;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes crash-flight-explosion-pulse {
+  from {
+    opacity: 0.65;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* History and debug layout                                                   */
+/* -------------------------------------------------------------------------- */
+
+.history-item {
+  margin-top: 0.75rem;
+  border: 1px solid var(--border-color, #30363d);
+  border-radius: 0.6rem;
+  background: var(--surface-secondary, #161b22);
+  color: var(--text-muted, #c9d1d9);
+  padding: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.history-item strong {
+  color: #f0f6fc;
+}
+
+.history-item small {
+  color: #8b949e;
+}
+
+.debug-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Responsive behavior                                                        */
+/* -------------------------------------------------------------------------- */
+
+@media (max-width: 850px) {
+  .crash-header,
+  .crash-bet-header {
+    flex-direction: column;
+  }
+
+  .crash-badges {
+    justify-content: flex-start;
+  }
+
+  .crash-bet-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .crash-bet-actions {
+    grid-column: 1 / -1;
+  }
+
+  .debug-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .crash-bet-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .crash-bet-actions {
+    grid-column: auto;
+  }
+
+  .crash-flight,
+  .crash-flight-svg {
+    min-height: 330px;
+    height: 330px;
+  }
+
+  .crash-flight-status {
+    top: 0.9rem;
+    left: 0.9rem;
+  }
+
+  .crash-flight-caption {
+    right: 0.8rem;
+    bottom: 0.65rem;
+    left: 0.8rem;
+  }
+
+  .crash-flight-milestones text {
+    font-size: 14px;
+  }
+}

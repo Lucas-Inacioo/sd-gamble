@@ -1,0 +1,83 @@
+/** Styles for the application shell and game navigation. */
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+  background: var(--color-page);
+}
+
+.app-sidebar {
+  display: flex;
+  flex: 0 0 220px;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+}
+
+.app-logo {
+  margin: 0 0 var(--space-5);
+  font-size: 1.4rem;
+}
+
+.app-nav-button {
+  width: 100%;
+  padding: 12px 14px;
+  color: var(--color-text);
+  text-align: left;
+  font-weight: 700;
+  cursor: pointer;
+  background: var(--color-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.app-nav-button:hover:not(:disabled) {
+  border-color: var(--color-subtle);
+  transform: translateY(-1px);
+}
+
+.app-nav-button--active {
+  color: #fff;
+  background: var(--color-primary);
+  border-color: var(--color-primary-hover);
+}
+
+.app-content {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-6);
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    flex-direction: column;
+  }
+
+  .app-sidebar {
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+    padding: var(--space-3);
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .app-logo {
+    flex: 0 0 auto;
+    margin: 0 var(--space-2) 0 0;
+  }
+
+  .app-nav-button {
+    flex: 0 0 auto;
+    width: auto;
+    white-space: nowrap;
+  }
+
+  .app-content {
+    padding: var(--space-3);
+  }
+}

@@ -1,0 +1,176 @@
+/** Reusable visual primitives shared by all game screens. */
+.card {
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.card--compact {
+  padding: var(--space-4);
+}
+
+.status-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--color-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.status-box__label {
+  color: var(--color-muted);
+  font-size: 0.813rem;
+}
+
+.status-box__value {
+  overflow-wrap: anywhere;
+}
+
+.status-box__value--good {
+  color: var(--color-success);
+}
+
+.status-box__value--bad {
+  color: var(--color-danger);
+}
+
+.status-box__value--neutral {
+  color: var(--color-warning);
+}
+
+.button {
+  padding: 10px 14px;
+  color: var(--color-text);
+  font-weight: 700;
+  cursor: pointer;
+  background: var(--color-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--color-subtle);
+  transform: translateY(-1px);
+}
+
+.button:disabled {
+  opacity: 0.55;
+}
+
+.button--primary {
+  color: #fff;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.button--primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.button--accent {
+  color: #fff;
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.button--accent:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.button--danger {
+  color: #fff;
+  background: #da3633;
+  border-color: #da3633;
+}
+
+.form-control {
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--color-text);
+  background: var(--color-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.form-label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.muted-text {
+  color: var(--color-muted);
+}
+
+.message-box {
+  padding: var(--space-3);
+  color: var(--color-text);
+  background: var(--color-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.json-view {
+  padding: var(--space-3);
+  overflow-x: auto;
+  color: #c9d1d9;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  background: var(--color-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.section-heading {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.game-title {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 2.4rem);
+}
+
+.game-subtitle {
+  margin: var(--space-2) 0 0;
+  color: var(--color-muted);
+}
+
+.status-grid,
+.debug-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--space-3);
+}
+
+.debug-grid {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-5);
+}
+
+.panel-heading-row,
+.history-heading-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.history-item {
+  padding-top: var(--space-3);
+  margin-top: var(--space-3);
+  overflow-wrap: anywhere;
+  border-top: 1px solid var(--color-border);
+}

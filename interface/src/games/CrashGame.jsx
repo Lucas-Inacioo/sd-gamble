@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { API_BASE_URL, GAME_SERVER_URL } from "../config.js";
 import { Card, DebugPanel, StatusBox, sharedStyles } from "../components/DebugPanels.jsx";
@@ -10,6 +10,7 @@ const VISUAL_GROWTH_RATE = 0.06;
 const MAX_POINTS = 450;
 
 export default function CrashGame() {
+  const socketRef = useRef(null);
   const [socketStatus, setSocketStatus] = useState("connecting");
   const [apiStatus, setApiStatus] = useState("checking");
   const [phase, setPhase] = useState("initial");
@@ -26,9 +27,18 @@ export default function CrashGame() {
   const [apiLogs, setApiLogs] = useState([]);
   const [history, setHistory] = useState([]);
 
+  // Demo-only wager state. The system has no real money or user wallet.
+  const [betAmount, setBetAmount] = useState("10");
+  const [autoCashout, setAutoCashout] = useState("2.00");
+  const [bet, setBet] = useState(null);
+  const [betMessage, setBetMessage] = useState(
+    "Place a demo bet during the waiting phase. No real money is used."
+  );
+
   useEffect(() => {
     loadApiData();
     const socket = io(GAME_SERVER_URL, { transports: ["websocket", "polling"] });
+    socketRef.current = socket;
 
     socket.on("connect", () => {
       setSocketStatus("connected");
@@ -106,7 +116,55 @@ export default function CrashGame() {
       await loadApiData();
     });
 
-    return () => socket.disconnect();
+    socket.on("crash_bet_queued", (data) => {
+      addEvent("crash_bet_queued", data);
+      setBet(data);
+      setBetMessage(
+        `Demo bet of ${Number(data.amount).toFixed(2)} queued for the next round.`
+      );
+    });
+
+    socket.on("crash_bet_started", (data) => {
+      addEvent("crash_bet_started", data);
+      setBet(data);
+      setBetMessage(
+        data.autoCashout
+          ? `Bet active. Automatic cash out set to ${Number(data.autoCashout).toFixed(2)}x.`
+          : "Bet active. Cash out manually before the server crashes the round."
+      );
+    });
+
+    socket.on("crash_bet_cashed_out", (data) => {
+      addEvent("crash_bet_cashed_out", data);
+      setBet(data);
+      setBetMessage(
+        `${data.settlementType === "automatic" ? "Automatic" : "Manual"} cash out: ${Number(data.payout).toFixed(2)} demo credits.`
+      );
+    });
+
+    socket.on("crash_bet_lost", (data) => {
+      addEvent("crash_bet_lost", data);
+      setBet(data);
+      setBetMessage(
+        `The round crashed at ${Number(data.crashPoint).toFixed(2)}x before this bet was cashed out.`
+      );
+    });
+
+    socket.on("crash_bet_cancelled", (data) => {
+      addEvent("crash_bet_cancelled", data);
+      setBet(null);
+      setBetMessage(`Queued bet of ${Number(data.amount).toFixed(2)} was cancelled.`);
+    });
+
+    socket.on("crash_error", (data) => {
+      addEvent("crash_error", data);
+      setBetMessage(data.message || "Crash bet error.");
+    });
+
+    return () => {
+      socketRef.current = null;
+      socket.disconnect();
+    };
   }, []);
 
   useEffect(() => {
@@ -161,6 +219,39 @@ export default function CrashGame() {
     setEvents((old) => [{ id: crypto.randomUUID(), createdAt: new Date().toISOString(), name, payload }, ...old].slice(0, 12));
   }
 
+  function placeDemoBet() {
+    const amount = Number(betAmount);
+    const auto = autoCashout.trim() === "" ? null : Number(autoCashout);
+
+    if (phase !== "waiting") {
+      setBetMessage("Wait for the next betting phase before placing a demo bet.");
+      return;
+    }
+
+    if (!Number.isFinite(amount) || amount < 1) {
+      setBetMessage("Enter a demo amount greater than or equal to 1.");
+      return;
+    }
+
+    if (auto !== null && (!Number.isFinite(auto) || auto < 1.01)) {
+      setBetMessage("Auto cash out must be empty or at least 1.01x.");
+      return;
+    }
+
+    socketRef.current?.emit("crash_place_bet", {
+      amount,
+      autoCashout: auto,
+    });
+  }
+
+  function cancelDemoBet() {
+    socketRef.current?.emit("crash_cancel_bet");
+  }
+
+  function cashOutDemoBet() {
+    socketRef.current?.emit("crash_cash_out");
+  }
+
   const maxY = useMemo(() => Math.max(5, ...chartPoints.map((point) => point.y), multiplier, crashPoint || 1), [chartPoints, multiplier, crashPoint]);
   const maxT = useMemo(() => Math.max(30, ...chartPoints.map((point) => point.t)), [chartPoints]);
   const points = useMemo(() => chartPoints.map((point) => {
@@ -170,6 +261,11 @@ export default function CrashGame() {
     return `${x},${y}`;
   }).join(" "), [chartPoints, maxT, maxY]);
   const guideValues = Array.from(new Set([1, 2, 3, 4, Math.ceil(maxY)])).filter((value) => value <= Math.ceil(maxY));
+
+  const hasQueuedBet = bet?.status === "queued";
+  const hasActiveBet = bet?.status === "active";
+  const canPlaceBet = phase === "waiting" && !hasQueuedBet;
+  const canCashOut = phase === "active" && hasActiveBet;
 
   return (
     <div>
@@ -191,6 +287,96 @@ export default function CrashGame() {
           {history.length === 0 && <span style={styles.muted}>No completed rounds yet.</span>}
           {history.slice(0, 12).map((round) => <span key={round.id} style={{ ...styles.pill, color: Number(round.crashPoint) >= 2 ? "#3fb950" : "#f85149" }}>{Number(round.crashPoint).toFixed(2)}x</span>)}
         </div>
+      </Card>
+
+      <Card>
+        <div style={styles.betHeader}>
+          <div>
+            <h2 style={styles.sectionTitle}>Play Crash (demo credits)</h2>
+            <p style={styles.subtitle}>
+              Place a bet during the waiting phase, then cash out before the authoritative server crash.
+            </p>
+          </div>
+          <StatusBox
+            label="Bet status"
+            value={bet?.status || "none"}
+          />
+        </div>
+
+        <div style={styles.betControls}>
+          <label style={styles.inputLabel}>
+            Demo amount
+            <input
+              type="number"
+              min="1"
+              max="1000"
+              step="1"
+              value={betAmount}
+              disabled={phase !== "waiting" || hasQueuedBet}
+              onChange={(event) => setBetAmount(event.target.value)}
+              style={styles.input}
+            />
+          </label>
+
+          <label style={styles.inputLabel}>
+            Auto cash out (optional)
+            <input
+              type="number"
+              min="1.01"
+              max="100"
+              step="0.01"
+              placeholder="Manual cash out"
+              value={autoCashout}
+              disabled={phase !== "waiting" || hasQueuedBet}
+              onChange={(event) => setAutoCashout(event.target.value)}
+              style={styles.input}
+            />
+          </label>
+
+          <div style={styles.betActions}>
+            {canPlaceBet && (
+              <button style={styles.primaryButton} onClick={placeDemoBet}>
+                Place demo bet
+              </button>
+            )}
+
+            {hasQueuedBet && phase === "waiting" && (
+              <button style={styles.secondaryButton} onClick={cancelDemoBet}>
+                Cancel queued bet
+              </button>
+            )}
+
+            {canCashOut && (
+              <button style={styles.cashOutButton} onClick={cashOutDemoBet}>
+                Cash out at {multiplier.toFixed(2)}x
+              </button>
+            )}
+
+            {phase === "active" && !hasActiveBet && (
+              <span style={styles.muted}>Betting is closed for this round.</span>
+            )}
+          </div>
+        </div>
+
+        <p style={styles.betMessage}>{betMessage}</p>
+
+        {bet && (
+          <pre style={sharedStyles.pre}>
+{JSON.stringify(
+  {
+    betId: bet.betId,
+    status: bet.status,
+    amount: bet.amount,
+    autoCashout: bet.autoCashout,
+    cashoutMultiplier: bet.cashoutMultiplier,
+    payout: bet.payout,
+    settlementType: bet.settlementType,
+  },
+  null,
+  2
+)}
+          </pre>
+        )}
       </Card>
 
       <Card>
@@ -218,7 +404,7 @@ export default function CrashGame() {
 
       <Card>
         <h2 style={styles.sectionTitle}>Current round data</h2>
-        <pre style={sharedStyles.pre}>{JSON.stringify({ phase, roundId, multiplier, crashPoint, frontendKnowsCrashPoint: crashPoint !== null, seedCommitment, revealedProof }, null, 2)}</pre>
+        <pre style={sharedStyles.pre}>{JSON.stringify({ phase, roundId, multiplier, crashPoint, frontendKnowsCrashPoint: crashPoint !== null, seedCommitment, revealedProof, bet }, null, 2)}</pre>
       </Card>
 
       <div style={styles.columns}>
@@ -258,4 +444,13 @@ const styles = {
   columns: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20 },
   historyHeading: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 },
   historyItem: { borderTop: "1px solid #30363d", paddingTop: 12, marginTop: 12, overflowWrap: "anywhere" },
+  betHeader: { display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" },
+  betControls: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, alignItems: "end", marginTop: 14 },
+  inputLabel: { display: "flex", flexDirection: "column", gap: 7, color: "#8b949e", fontSize: 14, fontWeight: 700 },
+  input: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 8, color: "#e6edf3", padding: "10px 12px", fontSize: 16 },
+  betActions: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" },
+  primaryButton: { border: 0, borderRadius: 8, padding: "11px 14px", background: "#238636", color: "white", cursor: "pointer", fontWeight: 800 },
+  secondaryButton: { border: "1px solid #30363d", borderRadius: 8, padding: "11px 14px", background: "#0d1117", color: "#e6edf3", cursor: "pointer", fontWeight: 800 },
+  cashOutButton: { border: 0, borderRadius: 8, padding: "11px 14px", background: "#1f6feb", color: "white", cursor: "pointer", fontWeight: 800 },
+  betMessage: { margin: "16px 0 0", padding: 12, borderRadius: 8, background: "#0d1117", border: "1px solid #30363d" },
 };

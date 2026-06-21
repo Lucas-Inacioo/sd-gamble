@@ -5,7 +5,6 @@
   "description": "Distributed casino academic demo: React interface, Socket.IO game engine, Express API and Supabase PostgreSQL.",
   "scripts": {
     "install:all": "npm install --prefix backend && npm install --prefix interface",
-    "dev": "node scripts/print-run-help.js",
     "dev:backend": "npm run dev --prefix backend",
     "dev:web": "npm run dev --prefix interface"
   },

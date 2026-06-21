@@ -1,9 +1,5 @@
 /**
  * PostgreSQL access layer.
- *
- * This module is intentionally small: game rules stay in `index.js` while all
- * SQL statements live here. The frontend never imports or receives database
- * credentials; only the backend uses this connection pool.
  */
 const { Pool } = require("pg");
 
@@ -32,12 +28,12 @@ async function query(text, values = []) {
   return pool.query(text, values);
 }
 
-/** Verifies that PostgreSQL is reachable; used by startup and `/health`. */
+/** Verifies that PostgreSQL is reachable */
 async function checkDatabase() {
   await query("select 1 as ok");
 }
 
-/** Persists a structured log entry used by the technical/debug panels. */
+/** Persists a structured log entry */
 async function addLog(source, game, event, details = {}) {
   await query(
     `
@@ -48,7 +44,7 @@ async function addLog(source, game, event, details = {}) {
   );
 }
 
-/** Saves one completed Crash round. The unique external ID makes retries safe. */
+/** Saves one completed Crash round. */
 async function saveCrashRound(round) {
   await query(
     `
@@ -76,7 +72,7 @@ async function saveCrashRound(round) {
   );
 }
 
-/** Saves a completed Mines game, including the board revealed after completion. */
+/** Saves a completed Mines game */
 async function saveMinesGame(game) {
   await query(
     `
@@ -112,7 +108,7 @@ async function saveMinesGame(game) {
   );
 }
 
-/** Saves the final, backend-authoritative outcome of a Double round. */
+/** Saves the final outcome of a Double round */
 async function saveDoubleRound(round) {
   await query(
     `

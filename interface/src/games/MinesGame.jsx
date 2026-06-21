@@ -10,8 +10,7 @@ const MINE_OPTIONS = [1, 2, 3, 5, 7, 10];
  * Mines game screen.
  *
  * The browser reveals only the tiles returned by the backend. Mine positions
- * remain server-side until the game finishes, which demonstrates a server-
- * authoritative interaction model.
+ * remain server-side until the game finishes.
  */
 export default function MinesGame() {
   const socketRef = useRef(null);
@@ -136,7 +135,7 @@ export default function MinesGame() {
     }
   }
 
-  /** Requests a tile reveal. The server decides whether it contains a mine. */
+  /** Requests a tile reveal. */
   function revealTile(tileIndex) {
     if (status === "active" && !revealedTiles.includes(tileIndex)) {
       socketRef.current?.emit("mines_reveal_tile", { tileIndex });

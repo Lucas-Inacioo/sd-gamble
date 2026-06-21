@@ -13,14 +13,10 @@ import "../styles/crash-game.css";
 
 /**
  * Crash game screen.
- *
- * The server is authoritative: this component never calculates a crash point
- * or a live multiplier. It only renders data received from Socket.IO.
  */
 export default function CrashGame() {
   const socketRef = useRef(null);
 
-  /** Keeps technical logs readable while preserving all visible server values. */
   const lastLoggedMultiplierEventRef = useRef(0);
 
   const [socketStatus, setSocketStatus] = useState("connecting");
@@ -30,7 +26,6 @@ export default function CrashGame() {
   const [secondsLeft, setSecondsLeft] = useState(null);
   const [roundId, setRoundId] = useState(null);
 
-  /** Official multiplier from the backend. Never calculated in the browser. */
   const [multiplier, setMultiplier] = useState(1);
 
   const [crashPoint, setCrashPoint] = useState(null);
@@ -42,7 +37,6 @@ export default function CrashGame() {
   const [apiLogs, setApiLogs] = useState([]);
   const [history, setHistory] = useState([]);
 
-  // Demonstration-only bet state.
   const [betAmount, setBetAmount] = useState("10");
   const [autoCashOut, setAutoCashOut] = useState("2.00");
   const [bet, setBet] = useState(null);
@@ -134,7 +128,7 @@ export default function CrashGame() {
 
     /**
      * This is the sole location where the visible live multiplier changes.
-     * The decorative rocket follows it separately; it does not predict values.
+     * The decorative rocket follows it separately.
      */
     socket.on("multiplier_update", (data) => {
       const serverMultiplier = Number(data.multiplier);
@@ -335,38 +329,16 @@ export default function CrashGame() {
   return (
     <div className="crash-game">
       <Card>
-        <div className="crash-header">
-          <div>
-            <h1 className="game-title">Crash</h1>
-          </div>
+        <h1 className="game-title">Crash</h1>
 
-          <div className="crash-badges" aria-label="Connection and round summary">
-            <Badge text={`Socket: ${socketStatus}`} />
-            <Badge text={`API: ${apiStatus}`} />
-            <Badge text={`Phase: ${phase}`} />
-            <Badge text={`Knows crash: ${crashPoint === null ? "no" : "yes"}`} />
-          </div>
-        </div>
-
-        <div className="crash-results" aria-label="Recent results">
-          <strong className="muted-text">Recent results</strong>
-
-          {history.length === 0 && (
-            <span className="muted-text">No completed rounds yet.</span>
-          )}
-
-          {history.slice(0, 12).map((round) => (
-            <span
-              key={round.id}
-              className={`crash-result-pill ${
-                Number(round.crashPoint) >= 2
-                  ? "crash-result-pill--safe"
-                  : "crash-result-pill--low"
-              }`}
-            >
-              {formatMultiplier(round.crashPoint)}
-            </span>
-          ))}
+        <div className="status-grid">
+          <StatusBox label="Game socket" value={socketStatus} />
+          <StatusBox label="API" value={apiStatus} />
+          <StatusBox label="Round status" value={phase} />
+          <StatusBox
+            label="Knows outcome?"
+            value={crashPoint !== null ? "yes" : "no"}
+          />
         </div>
       </Card>
 

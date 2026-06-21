@@ -1,14 +1,3 @@
-/**
- * Distributed Casino Backend
- *
- * Responsibilities:
- * - exposes REST endpoints for health, history and audit logs;
- * - accepts Socket.IO game actions and emits real-time state changes;
- * - keeps all secret outcomes on the server until a round is complete;
- * - persists finished rounds and diagnostics through the PostgreSQL access layer.
- *
- * This is an academic simulator. All bets use demonstration credits only.
- */
 require("dotenv").config();
 
 const crypto = require("crypto");
@@ -27,37 +16,30 @@ const {
 } = require("./db");
 
 const PORT = Number(process.env.PORT || 4000);
-
 const WAITING_SECONDS = 5;
 const COOLDOWN_MS = 3000;
 const MULTIPLIER_UPDATE_MS = 100;
 const CRASH_GROWTH_RATE = Number(process.env.CRASH_GROWTH_RATE || 0.06);
-
 const MINES_BOARD_SIZE = 25;
 const DOUBLE_SPIN_MS = 1400;
 
 const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173")
   .split(",")
-  .map((origin) => origin.trim().replace(/\/+$/, ""))
+  .map((origin) => origin.trim())
   .filter(Boolean);
 
 const app = express();
 const httpServer = http.createServer(app);
 
 function originIsAllowed(origin) {
-  const normalizedOrigin = origin?.replace(/\/+$/, "");
-  return !normalizedOrigin || allowedOrigins.includes(normalizedOrigin);
+  return !origin || allowedOrigins.includes(origin);
 }
 
 app.use(express.json());
-
 app.use(
   cors({
     origin(origin, callback) {
-      if (originIsAllowed(origin)) {
-        return callback(null, true);
-      }
-
+      if (originIsAllowed(origin)) return callback(null, true);
       return callback(new Error(`Origin blocked by CORS: ${origin}`));
     },
   })
@@ -66,13 +48,8 @@ app.use(
 const io = new Server(httpServer, {
   cors: {
     origin(origin, callback) {
-      if (originIsAllowed(origin)) {
-        return callback(null, true);
-      }
-
-      return callback(
-        new Error(`Origin blocked by Socket.IO CORS: ${origin}`)
-      );
+      if (originIsAllowed(origin)) return callback(null, true);
+      return callback(new Error(`Origin blocked by Socket.IO CORS: ${origin}`));
     },
     methods: ["GET", "POST"],
   },
@@ -86,18 +63,15 @@ let serverLogs = [];
 app.get("/health", async (_req, res) => {
   try {
     await checkDatabase();
-
     const payload = {
       ok: true,
       service: "distributed-casino-backend",
       role: "REST API + Socket.IO game engine",
       now: new Date().toISOString(),
     };
-
     safeApiLog("system", "health_check", payload);
-
     res.json(payload);
-  } catch (_error) {
+  } catch (error) {
     res.status(503).json({
       ok: false,
       service: "distributed-casino-backend",
@@ -118,15 +92,8 @@ app.get("/api/rounds/history", async (_req, res, next) => {
       order by crashed_at desc
       limit 10
     `);
-
-    safeApiLog("crash", "history_requested", {
-      count: rows.length,
-    });
-
-    res.json({
-      success: true,
-      rounds: rows,
-    });
+    safeApiLog("crash", "history_requested", { count: rows.length });
+    res.json({ success: true, rounds: rows });
   } catch (error) {
     next(error);
   }
@@ -148,15 +115,8 @@ app.get("/api/mines/history", async (_req, res, next) => {
       order by finished_at desc
       limit 10
     `);
-
-    safeApiLog("mines", "history_requested", {
-      count: rows.length,
-    });
-
-    res.json({
-      success: true,
-      games: rows,
-    });
+    safeApiLog("mines", "history_requested", { count: rows.length });
+    res.json({ success: true, games: rows });
   } catch (error) {
     next(error);
   }
@@ -178,15 +138,8 @@ app.get("/api/double/history", async (_req, res, next) => {
       order by finished_at desc
       limit 10
     `);
-
-    safeApiLog("double", "history_requested", {
-      count: rows.length,
-    });
-
-    res.json({
-      success: true,
-      rounds: rows,
-    });
+    safeApiLog("double", "history_requested", { count: rows.length });
+    res.json({ success: true, rounds: rows });
   } catch (error) {
     next(error);
   }
@@ -196,7 +149,6 @@ app.get("/api/logs", async (req, res, next) => {
   try {
     const game = req.query.game || null;
     const source = req.query.source || null;
-
     const { rows } = await query(
       `
         select
@@ -210,15 +162,11 @@ app.get("/api/logs", async (req, res, next) => {
         where ($1::text is null or game = $1)
           and ($2::text is null or source = $2)
         order by created_at desc
-        limit 100
+        limit 10
       `,
       [game, source]
     );
-
-    res.json({
-      success: true,
-      logs: rows,
-    });
+    res.json({ success: true, logs: rows });
   } catch (error) {
     next(error);
   }
@@ -226,100 +174,50 @@ app.get("/api/logs", async (req, res, next) => {
 
 app.use((error, _req, res, _next) => {
   console.error("[api] request error", error);
-
-  res.status(500).json({
-    success: false,
-    message: "Internal server error.",
-  });
+  res.status(500).json({ success: false, message: "Internal server error." });
 });
 
 io.on("connection", (socket) => {
-  logServer("system", "client_connected", {
-    socketId: socket.id,
-  });
-
+  logServer("system", "client_connected", { socketId: socket.id });
   socket.emit("server_snapshot", buildCrashSnapshot());
-
-  socket.emit("server_logs_snapshot", {
-    logs: serverLogs.slice(0, 80),
-  });
+  socket.emit("server_logs_snapshot", { logs: serverLogs.slice(0, 80) });
 
   socket.on("disconnect", () => {
-    logServer("system", "client_disconnected", {
-      socketId: socket.id,
-    });
+    logServer("system", "client_disconnected", { socketId: socket.id });
   });
 
-  // Crash demo betting.
-  socket.on("crash_place_bet", (payload = {}) => {
-    queueCrashBet(socket, payload);
-  });
+  socket.on("crash_place_bet", (payload = {}) => queueCrashBet(socket, payload));
+  socket.on("crash_cancel_bet", () => cancelQueuedCrashBet(socket));
+  socket.on("crash_cash_out", () => cashOutCrashBet(socket, { source: "manual" }));
 
-  socket.on("crash_cancel_bet", () => {
-    cancelQueuedCrashBet(socket);
-  });
-
-  socket.on("crash_cash_out", () => {
-    cashOutCrashBet(socket, {
-      source: "manual",
-    });
-  });
-
-  // Mines.
-  socket.on("mines_start_game", (payload = {}) => {
-    startMinesGame(socket, payload);
-  });
-
-  socket.on("mines_reveal_tile", (payload = {}) => {
-    revealMinesTile(socket, payload);
-  });
-
-  socket.on("mines_cash_out", () => {
-    cashOutMinesGame(socket);
-  });
-
-  // Double.
-  socket.on("double_start_round", (payload = {}) => {
-    startDoubleRound(socket, payload);
-  });
+  socket.on("mines_start_game", (payload = {}) => startMinesGame(socket, payload));
+  socket.on("mines_reveal_tile", (payload = {}) => revealMinesTile(socket, payload));
+  socket.on("mines_cash_out", () => cashOutMinesGame(socket));
+  socket.on("double_start_round", (payload = {}) => startDoubleRound(socket, payload));
 });
 
 async function boot() {
   try {
     await checkDatabase();
   } catch (error) {
-    console.error(
-      "Cannot start: database connection failed.",
-      error.message
-    );
+    console.error("Cannot start: database connection failed.", error.message);
     process.exit(1);
   }
 
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Backend listening on port ${PORT}`);
-    console.log(
-      "Role: REST API, Socket.IO game engine and PostgreSQL persistence."
-    );
-
-    safeApiLog("system", "backend_started", {
-      port: PORT,
-    });
-
+    console.log("Role: REST API, Socket.IO game engine and PostgreSQL persistence.");
+    safeApiLog("system", "backend_started", { port: PORT });
     logServer("system", "game_engine_started", {
       port: PORT,
       role: "authoritative game computation",
     });
-
     startCrashLoop().catch((error) => {
       console.error("Crash loop stopped unexpectedly", error);
       process.exit(1);
     });
   });
 }
-
-/* -------------------------------------------------------------------------- */
-/* Crash                                                                      */
-/* -------------------------------------------------------------------------- */
 
 async function startCrashLoop() {
   while (true) {
@@ -333,26 +231,12 @@ async function runCrashWaitingPhase() {
   crashPhase = "waiting";
   currentCrashRound = null;
 
-  for (
-    let secondsLeft = WAITING_SECONDS;
-    secondsLeft >= 1;
-    secondsLeft -= 1
-  ) {
+  for (let secondsLeft = WAITING_SECONDS; secondsLeft >= 1; secondsLeft -= 1) {
     waitingSecondsLeft = secondsLeft;
-
-    io.emit("round_waiting", {
-      secondsLeft,
-    });
-
-    if (
-      secondsLeft === WAITING_SECONDS ||
-      secondsLeft === 1
-    ) {
-      logServer("crash", "round_waiting", {
-        secondsLeft,
-      });
+    io.emit("round_waiting", { secondsLeft });
+    if (secondsLeft === WAITING_SECONDS || secondsLeft === 1) {
+      logServer("crash", "round_waiting", { secondsLeft });
     }
-
     await delay(1000);
   }
 }
@@ -360,7 +244,6 @@ async function runCrashWaitingPhase() {
 function runCrashActiveRound() {
   return new Promise((resolve) => {
     const secret = generateCrashSecret();
-
     crashPhase = "active";
     waitingSecondsLeft = null;
 
@@ -369,7 +252,6 @@ function runCrashActiveRound() {
       externalRoundId: crypto.randomUUID(),
       startedAtMs: Date.now(),
       crashedAtMs: null,
-
       crashPoint: secret.crashPoint,
       serverSeed: secret.serverSeed,
       publicSeed: secret.publicSeed,
@@ -384,42 +266,35 @@ function runCrashActiveRound() {
 
     io.emit("round_started", {
       externalRoundId: currentCrashRound.externalRoundId,
-      startedAt: new Date(
-        currentCrashRound.startedAtMs
-      ).toISOString(),
-      serverSeedCommitment:
-        currentCrashRound.serverSeedCommitment,
+      startedAt: new Date(currentCrashRound.startedAtMs).toISOString(),
+      serverSeedCommitment: currentCrashRound.serverSeedCommitment,
     });
 
+    // Bets queued during the countdown become active only when the
+    // game server starts the round.
     activateQueuedCrashBets(currentCrashRound);
 
     const intervalId = setInterval(async () => {
       const round = currentCrashRound;
-
-      if (!round || round.status !== "active") {
-        return;
-      }
+      if (!round || round.status !== "active") return;
 
       const elapsedSeconds = getElapsedSeconds(round.startedAtMs);
       const multiplier = getCrashMultiplier(round.startedAtMs);
 
+      // Automatic cash outs are evaluated by the server.
       processCrashAutoCashOuts(round, multiplier);
 
       if (multiplier >= round.crashPoint) {
         clearInterval(intervalId);
-
         crashPhase = "crashed";
         round.status = "crashed";
         round.crashedAtMs = Date.now();
 
-        const finalElapsedSeconds = getElapsedSeconds(
-          round.startedAtMs
-        );
+        const finalElapsedSeconds = getElapsedSeconds(round.startedAtMs);
+        const finishedRound = { ...round };
 
-        const finishedRound = {
-          ...round,
-        };
-
+        // Any active bet that was not already cashed out loses at the
+        // crash point.
         settleLostCrashBets(finishedRound);
 
         logServer("crash", "round_crashed", {
@@ -435,12 +310,10 @@ function runCrashActiveRound() {
           elapsedSeconds: finalElapsedSeconds,
           serverSeed: finishedRound.serverSeed,
           publicSeed: finishedRound.publicSeed,
-          serverSeedCommitment:
-            finishedRound.serverSeedCommitment,
+          serverSeedCommitment: finishedRound.serverSeedCommitment,
         });
 
         await persistCrashRound(finishedRound);
-
         resolve();
         return;
       }
@@ -459,54 +332,29 @@ function buildCrashSnapshot() {
     return {
       status: "active",
       externalRoundId: currentCrashRound.externalRoundId,
-      multiplier: getCrashMultiplier(
-        currentCrashRound.startedAtMs
-      ),
-      elapsedSeconds: getElapsedSeconds(
-        currentCrashRound.startedAtMs
-      ),
-      startedAt: new Date(
-        currentCrashRound.startedAtMs
-      ).toISOString(),
-      serverSeedCommitment:
-        currentCrashRound.serverSeedCommitment,
+      multiplier: getCrashMultiplier(currentCrashRound.startedAtMs),
+      elapsedSeconds: getElapsedSeconds(currentCrashRound.startedAtMs),
+      startedAt: new Date(currentCrashRound.startedAtMs).toISOString(),
+      serverSeedCommitment: currentCrashRound.serverSeedCommitment,
     };
   }
-
-  return {
-    status: crashPhase,
-    secondsLeft: waitingSecondsLeft,
-  };
+  return { status: crashPhase, secondsLeft: waitingSecondsLeft };
 }
 
 function getElapsedSeconds(startedAtMs) {
-  return Number(
-    ((Date.now() - startedAtMs) / 1000).toFixed(2)
-  );
+  return Number(((Date.now() - startedAtMs) / 1000).toFixed(2));
 }
 
 function getCrashMultiplier(startedAtMs) {
   const elapsedSeconds = (Date.now() - startedAtMs) / 1000;
-
-  return Number(
-    Math.exp(elapsedSeconds * CRASH_GROWTH_RATE).toFixed(2)
-  );
+  return Number(Math.exp(elapsedSeconds * CRASH_GROWTH_RATE).toFixed(2));
 }
 
 function generateCrashSecret() {
   const serverSeed = crypto.randomBytes(32).toString("hex");
   const publicSeed = crypto.randomUUID();
-
-  const serverSeedCommitment = crypto
-    .createHash("sha256")
-    .update(serverSeed)
-    .digest("hex");
-
-  const hash = crypto
-    .createHmac("sha256", serverSeed)
-    .update(publicSeed)
-    .digest("hex");
-
+  const serverSeedCommitment = crypto.createHash("sha256").update(serverSeed).digest("hex");
+  const hash = crypto.createHmac("sha256", serverSeed).update(publicSeed).digest("hex");
   return {
     serverSeed,
     publicSeed,
@@ -516,138 +364,78 @@ function generateCrashSecret() {
 }
 
 function calculateCrashPoint(hash) {
-  if (isHashDivisible(hash, 20)) {
-    return 1;
-  }
-
+  if (isHashDivisible(hash, 20)) return 1;
   const h = Number.parseInt(hash.slice(0, 13), 16);
   const e = 2 ** 52;
-
-  const result =
-    Math.floor((100 * e - h) / (e - h)) / 100;
-
-  return Math.max(1, Math.min(5, Number(result.toFixed(2))));
+  const result = Math.floor((100 * e - h) / (e - h)) / 100;
+  return Math.max(1, Number(result.toFixed(2)));
 }
 
 function isHashDivisible(hash, mod) {
   let value = 0;
-
   for (let index = 0; index < hash.length; index += 4) {
-    value =
-      ((value << 16) +
-        Number.parseInt(
-          hash.substring(index, index + 4),
-          16
-        )) %
-      mod;
+    value = ((value << 16) + Number.parseInt(hash.substring(index, index + 4), 16)) % mod;
   }
-
   return value === 0;
 }
 
 async function persistCrashRound(round) {
   try {
-    logServer("crash", "database_persist_request", {
-      externalRoundId: round.externalRoundId,
-    });
-
+    logServer("crash", "database_persist_request", { externalRoundId: round.externalRoundId });
     await saveCrashRound(round);
-
     safeApiLog("crash", "round_persisted", {
       externalRoundId: round.externalRoundId,
       crashPoint: round.crashPoint,
     });
-
-    logServer("crash", "database_persist_success", {
-      externalRoundId: round.externalRoundId,
-    });
+    logServer("crash", "database_persist_success", { externalRoundId: round.externalRoundId });
   } catch (error) {
-    logServer("crash", "database_persist_failed", {
-      message: error.message,
-    });
+    logServer("crash", "database_persist_failed", { message: error.message });
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/* Crash demo betting                                                         */
-/* -------------------------------------------------------------------------- */
+// Crash demonstration
 
 function queueCrashBet(socket, payload) {
   if (crashPhase !== "waiting") {
-    rejectCrashBet(
-      socket,
-      "Bets can only be placed during the countdown.",
-      "round_not_waiting"
-    );
+    rejectCrashBet(socket, "Bets can only be placed during the countdown.", "round_not_waiting");
     return;
   }
 
   const amount = Number(payload.amount);
-
-  const autoCashOutInput =
-    payload.autoCashOut ?? payload.autoCashout ?? null;
-
+  const autoCashOutInput = payload.autoCashOut ?? payload.autoCashout ?? null;
   const autoCashOut =
     autoCashOutInput === null || autoCashOutInput === ""
       ? null
       : Number(autoCashOutInput);
 
-  if (
-    !Number.isFinite(amount) ||
-    amount < 1 ||
-    amount > 10000
-  ) {
-    rejectCrashBet(
-      socket,
-      "Demo amount must be between 1 and 10000.",
-      "invalid_amount"
-    );
+  if (!Number.isFinite(amount) || amount < 1 || amount > 10000) {
+    rejectCrashBet(socket, "Demo amount must be between 1 and 10000.", "invalid_amount");
     return;
   }
 
   if (
     autoCashOut !== null &&
-    (!Number.isFinite(autoCashOut) ||
-      autoCashOut < 1.01 ||
-      autoCashOut > 100)
+    (!Number.isFinite(autoCashOut) || autoCashOut < 1.01 || autoCashOut > 100)
   ) {
-    rejectCrashBet(
-      socket,
-      "Auto cash out must be between 1.01x and 100.00x.",
-      "invalid_auto_cash_out"
-    );
+    rejectCrashBet(socket, "Auto cash out must be between 1.01x and 100.00x.", "invalid_auto_cash_out");
     return;
   }
 
   const currentBet = socket.data.crashBet;
-
-  if (
-    currentBet?.status === "queued" ||
-    currentBet?.status === "active"
-  ) {
-    rejectCrashBet(
-      socket,
-      "This client already has a queued or active Crash bet.",
-      "bet_already_exists"
-    );
+  if (currentBet?.status === "queued" || currentBet?.status === "active") {
+    rejectCrashBet(socket, "This client already has a queued or active Crash bet.", "bet_already_exists");
     return;
   }
 
   const bet = {
     id: crypto.randomUUID(),
     status: "queued",
-
     amount: Number(amount.toFixed(2)),
-    autoCashOut:
-      autoCashOut === null
-        ? null
-        : Number(autoCashOut.toFixed(2)),
-
+    autoCashOut: autoCashOut === null ? null : Number(autoCashOut.toFixed(2)),
     externalRoundId: null,
     queuedAtMs: Date.now(),
     startedAtMs: null,
     finishedAtMs: null,
-
     cashOutMultiplier: null,
     payout: null,
   };
@@ -668,16 +456,8 @@ function queueCrashBet(socket, payload) {
 function cancelQueuedCrashBet(socket) {
   const bet = socket.data.crashBet;
 
-  if (
-    !bet ||
-    bet.status !== "queued" ||
-    crashPhase !== "waiting"
-  ) {
-    rejectCrashBet(
-      socket,
-      "Only a queued bet can be cancelled during the countdown.",
-      "cannot_cancel_bet"
-    );
+  if (!bet || bet.status !== "queued" || crashPhase !== "waiting") {
+    rejectCrashBet(socket, "Only a queued bet can be cancelled during the countdown.", "cannot_cancel_bet");
     return;
   }
 
@@ -697,9 +477,7 @@ function activateQueuedCrashBets(round) {
   for (const socket of io.sockets.sockets.values()) {
     const bet = socket.data.crashBet;
 
-    if (!bet || bet.status !== "queued") {
-      continue;
-    }
+    if (!bet || bet.status !== "queued") continue;
 
     bet.status = "active";
     bet.externalRoundId = round.externalRoundId;
@@ -730,10 +508,8 @@ function processCrashAutoCashOuts(round, multiplier) {
       continue;
     }
 
-    if (
-      bet.autoCashOut < round.crashPoint &&
-      multiplier >= bet.autoCashOut
-    ) {
+    // An auto cash out at or after the crash point cannot win.
+    if (bet.autoCashOut < round.crashPoint && multiplier >= bet.autoCashOut) {
       cashOutCrashBet(socket, {
         source: "auto",
         round,
@@ -754,11 +530,7 @@ function cashOutCrashBet(socket, options = {}) {
     round.status !== "active" ||
     bet.externalRoundId !== round.externalRoundId
   ) {
-    rejectCrashBet(
-      socket,
-      "There is no active Crash bet available for cash out.",
-      "no_active_bet"
-    );
+    rejectCrashBet(socket, "There is no active Crash bet available for cash out.", "no_active_bet");
     return;
   }
 
@@ -767,22 +539,17 @@ function cashOutCrashBet(socket, options = {}) {
       ? getCrashMultiplier(round.startedAtMs)
       : Number(options.multiplier);
 
+  // The backend checks the current round state before it allows
+  // a manual cash out.
   if (multiplier >= round.crashPoint) {
-    settleOneLostCrashBet(
-      socket,
-      round,
-      "cash_out_after_crash",
-      round.crashPoint
-    );
+    settleOneLostCrashBet(socket, round, "cash_out_after_crash", round.crashPoint);
     return;
   }
 
   bet.status = "cashed_out";
   bet.finishedAtMs = Date.now();
   bet.cashOutMultiplier = Number(multiplier.toFixed(2));
-  bet.payout = Number(
-    (bet.amount * bet.cashOutMultiplier).toFixed(2)
-  );
+  bet.payout = Number((bet.amount * bet.cashOutMultiplier).toFixed(2));
 
   logServer("crash", "bet_cashed_out", {
     socketId: socket.id,
@@ -809,12 +576,7 @@ function settleLostCrashBets(round) {
       bet.status === "active" &&
       bet.externalRoundId === round.externalRoundId
     ) {
-      settleOneLostCrashBet(
-        socket,
-        round,
-        "round_crashed",
-        round.crashPoint
-      );
+      settleOneLostCrashBet(socket, round, "round_crashed", round.crashPoint);
     }
   }
 }
@@ -855,11 +617,7 @@ function rejectCrashBet(socket, message, reason) {
     socketId: socket.id,
     reason,
   });
-
-  socket.emit("crash_error", {
-    message,
-    reason,
-  });
+  socket.emit("crash_error", { message, reason });
 }
 
 function publicCrashBet(bet) {
@@ -874,35 +632,22 @@ function publicCrashBet(bet) {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/* Mines                                                                      */
-/* -------------------------------------------------------------------------- */
-
 function startMinesGame(socket, payload) {
-  const minesCount = clamp(
-    Number(payload.minesCount || 3),
-    1,
-    MINES_BOARD_SIZE - 1
-  );
-
+  const minesCount = clamp(Number(payload.minesCount || 3), 1, MINES_BOARD_SIZE - 1);
   const secret = generateMinesSecret(minesCount);
-
   const game = {
     status: "active",
     externalGameId: crypto.randomUUID(),
     startedAtMs: Date.now(),
     finishedAtMs: null,
-
     minesCount,
     minePositions: secret.minePositions,
     revealedTiles: [],
     payoutMultiplier: 1,
-
     serverSeed: secret.serverSeed,
     publicSeed: secret.publicSeed,
     serverSeedCommitment: secret.serverSeedCommitment,
   };
-
   socket.data.minesGame = game;
 
   logServer("mines", "game_started", {
@@ -929,29 +674,15 @@ function revealMinesTile(socket, payload) {
   const tileIndex = Number(payload.tileIndex);
 
   if (!game || game.status !== "active") {
-    rejectMines(
-      socket,
-      "No active Mines game. Start a new game first.",
-      "no_active_game"
-    );
+    rejectMines(socket, "No active Mines game. Start a new game first.", "no_active_game");
     return;
   }
-
-  if (
-    !Number.isInteger(tileIndex) ||
-    tileIndex < 0 ||
-    tileIndex >= MINES_BOARD_SIZE
-  ) {
+  if (!Number.isInteger(tileIndex) || tileIndex < 0 || tileIndex >= MINES_BOARD_SIZE) {
     rejectMines(socket, "Invalid tile index.", "invalid_tile");
     return;
   }
-
   if (game.revealedTiles.includes(tileIndex)) {
-    rejectMines(
-      socket,
-      "Tile already revealed.",
-      "already_revealed"
-    );
+    rejectMines(socket, "Tile already revealed.", "already_revealed");
     return;
   }
 
@@ -959,49 +690,28 @@ function revealMinesTile(socket, payload) {
     game.status = "lost";
     game.finishedAtMs = Date.now();
     game.payoutMultiplier = 0;
-
     logServer("mines", "mine_hit", {
       externalGameId: game.externalGameId,
       tileIndex,
-      note: "Mine positions are revealed because the game ended.",
+      note: "Mine positions are now revealed because the game ended.",
     });
-
-    socket.emit(
-      "mines_game_lost",
-      publicFinishedMinesGame(game, {
-        selectedTile: tileIndex,
-      })
-    );
-
+    socket.emit("mines_game_lost", publicFinishedMinesGame(game, { selectedTile: tileIndex }));
     persistMinesGame(game);
     return;
   }
 
   game.revealedTiles.push(tileIndex);
   game.revealedTiles.sort((a, b) => a - b);
+  game.payoutMultiplier = calculateMinesPayout(game.minesCount, game.revealedTiles.length);
 
-  game.payoutMultiplier = calculateMinesPayout(
-    game.minesCount,
-    game.revealedTiles.length
-  );
-
-  if (
-    game.revealedTiles.length ===
-    MINES_BOARD_SIZE - game.minesCount
-  ) {
+  if (game.revealedTiles.length === MINES_BOARD_SIZE - game.minesCount) {
     game.status = "won";
     game.finishedAtMs = Date.now();
-
     logServer("mines", "all_safe_tiles_revealed", {
       externalGameId: game.externalGameId,
       payoutMultiplier: game.payoutMultiplier,
     });
-
-    socket.emit(
-      "mines_game_cashed_out",
-      publicFinishedMinesGame(game)
-    );
-
+    socket.emit("mines_game_cashed_out", publicFinishedMinesGame(game));
     persistMinesGame(game);
     return;
   }
@@ -1012,7 +722,6 @@ function revealMinesTile(socket, payload) {
     revealedCount: game.revealedTiles.length,
     payoutMultiplier: game.payoutMultiplier,
   });
-
   socket.emit("mines_tile_revealed", {
     externalGameId: game.externalGameId,
     tileIndex,
@@ -1024,83 +733,44 @@ function revealMinesTile(socket, payload) {
 
 function cashOutMinesGame(socket) {
   const game = socket.data.minesGame;
-
   if (!game || game.status !== "active") {
-    rejectMines(
-      socket,
-      "No active Mines game to cash out.",
-      "no_active_game"
-    );
+    rejectMines(socket, "No active Mines game to cash out.", "no_active_game");
     return;
   }
-
   if (game.revealedTiles.length === 0) {
-    rejectMines(
-      socket,
-      "Reveal at least one safe tile before cashing out.",
-      "no_tiles_revealed"
-    );
+    rejectMines(socket, "Reveal at least one safe tile before cashing out.", "no_tiles_revealed");
     return;
   }
 
   game.status = "cashed_out";
   game.finishedAtMs = Date.now();
-
   logServer("mines", "game_cashed_out", {
     externalGameId: game.externalGameId,
     revealedCount: game.revealedTiles.length,
     payoutMultiplier: game.payoutMultiplier,
-    note: "Mine positions are revealed after cash out.",
+    note: "Mine positions are now revealed after cash out.",
   });
-
-  socket.emit(
-    "mines_game_cashed_out",
-    publicFinishedMinesGame(game)
-  );
-
+  socket.emit("mines_game_cashed_out", publicFinishedMinesGame(game));
   persistMinesGame(game);
 }
 
 function rejectMines(socket, message, reason) {
-  logServer("mines", "action_rejected", {
-    socketId: socket.id,
-    reason,
-  });
-
-  socket.emit("mines_error", {
-    message,
-  });
+  logServer("mines", "action_rejected", { socketId: socket.id, reason });
+  socket.emit("mines_error", { message });
 }
 
 function generateMinesSecret(minesCount) {
   const serverSeed = crypto.randomBytes(32).toString("hex");
   const publicSeed = crypto.randomUUID();
-
-  const serverSeedCommitment = crypto
-    .createHash("sha256")
-    .update(serverSeed)
-    .digest("hex");
-
+  const serverSeedCommitment = crypto.createHash("sha256").update(serverSeed).digest("hex");
   const mineSet = new Set();
   let nonce = 0;
 
   while (mineSet.size < minesCount) {
-    const digest = crypto
-      .createHmac("sha256", serverSeed)
-      .update(`${publicSeed}:${nonce}`)
-      .digest();
-
-    for (
-      let offset = 0;
-      offset <= digest.length - 4 &&
-      mineSet.size < minesCount;
-      offset += 4
-    ) {
-      mineSet.add(
-        digest.readUInt32BE(offset) % MINES_BOARD_SIZE
-      );
+    const digest = crypto.createHmac("sha256", serverSeed).update(`${publicSeed}:${nonce}`).digest();
+    for (let offset = 0; offset <= digest.length - 4 && mineSet.size < minesCount; offset += 4) {
+      mineSet.add(digest.readUInt32BE(offset) % MINES_BOARD_SIZE);
     }
-
     nonce += 1;
   }
 
@@ -1114,10 +784,7 @@ function generateMinesSecret(minesCount) {
 
 function calculateMinesPayout(minesCount, revealedCount) {
   const risk = minesCount / MINES_BOARD_SIZE;
-
-  return Number(
-    (1 + revealedCount * (0.12 + risk * 0.75)).toFixed(2)
-  );
+  return Number((1 + revealedCount * (0.12 + risk * 0.75)).toFixed(2));
 }
 
 function publicFinishedMinesGame(game, extra = {}) {
@@ -1138,79 +805,46 @@ function publicFinishedMinesGame(game, extra = {}) {
 
 async function persistMinesGame(game) {
   try {
-    logServer("mines", "database_persist_request", {
-      externalGameId: game.externalGameId,
-    });
-
+    logServer("mines", "database_persist_request", { externalGameId: game.externalGameId });
     await saveMinesGame(game);
-
     safeApiLog("mines", "game_persisted", {
       externalGameId: game.externalGameId,
       status: game.status,
     });
-
-    logServer("mines", "database_persist_success", {
-      externalGameId: game.externalGameId,
-    });
+    logServer("mines", "database_persist_success", { externalGameId: game.externalGameId });
   } catch (error) {
-    logServer("mines", "database_persist_failed", {
-      message: error.message,
-    });
+    logServer("mines", "database_persist_failed", { message: error.message });
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/* Double                                                                     */
-/* -------------------------------------------------------------------------- */
-
 function startDoubleRound(socket, payload) {
-  const selectedColor = String(
-    payload.selectedColor || ""
-  ).toLowerCase();
-
+  const selectedColor = String(payload.selectedColor || "").toLowerCase();
   const validColors = ["red", "black", "green"];
-
   if (!validColors.includes(selectedColor)) {
-    socket.emit("double_error", {
-      message: "Choose red, black, or green.",
-    });
-
-    logServer("double", "round_rejected", {
-      socketId: socket.id,
-      reason: "invalid_color",
-    });
-
+    socket.emit("double_error", { message: "Choose red, black, or green." });
+    logServer("double", "round_rejected", { socketId: socket.id, reason: "invalid_color" });
     return;
   }
-
   if (socket.data.doubleRound?.status === "spinning") {
-    socket.emit("double_error", {
-      message: "A Double round is already spinning.",
-    });
+    socket.emit("double_error", { message: "A Double round is already spinning." });
     return;
   }
 
   const secret = generateDoubleSecret();
-
   const round = {
     status: "spinning",
     externalRoundId: crypto.randomUUID(),
     selectedColor,
-
     resultNumber: secret.resultNumber,
     resultColor: secret.resultColor,
-
     won: null,
     payoutMultiplier: 0,
-
     startedAtMs: Date.now(),
     finishedAtMs: null,
-
     serverSeed: secret.serverSeed,
     publicSeed: secret.publicSeed,
     serverSeedCommitment: secret.serverSeedCommitment,
   };
-
   socket.data.doubleRound = round;
 
   logServer("double", "round_started", {
@@ -1230,20 +864,11 @@ function startDoubleRound(socket, payload) {
   });
 
   setTimeout(async () => {
-    if (
-      socket.data.doubleRound !== round ||
-      round.status !== "spinning"
-    ) {
-      return;
-    }
-
+    if (socket.data.doubleRound !== round || round.status !== "spinning") return;
     round.status = "finished";
     round.finishedAtMs = Date.now();
     round.won = round.selectedColor === round.resultColor;
-
-    round.payoutMultiplier = round.won
-      ? getDoublePayout(round.selectedColor)
-      : 0;
+    round.payoutMultiplier = round.won ? getDoublePayout(round.selectedColor) : 0;
 
     logServer("double", "round_finished", {
       externalRoundId: round.externalRoundId,
@@ -1254,11 +879,7 @@ function startDoubleRound(socket, payload) {
       payoutMultiplier: round.payoutMultiplier,
     });
 
-    socket.emit(
-      "double_round_finished",
-      publicFinishedDoubleRound(round)
-    );
-
+    socket.emit("double_round_finished", publicFinishedDoubleRound(round));
     await persistDoubleRound(round);
   }, DOUBLE_SPIN_MS);
 }
@@ -1266,34 +887,14 @@ function startDoubleRound(socket, payload) {
 function generateDoubleSecret() {
   const serverSeed = crypto.randomBytes(32).toString("hex");
   const publicSeed = crypto.randomUUID();
-
-  const serverSeedCommitment = crypto
-    .createHash("sha256")
-    .update(serverSeed)
-    .digest("hex");
-
-  const hash = crypto
-    .createHmac("sha256", serverSeed)
-    .update(publicSeed)
-    .digest("hex");
-
-  const resultNumber =
-    Number.parseInt(hash.slice(0, 8), 16) % 15;
-
-  return {
-    serverSeed,
-    publicSeed,
-    serverSeedCommitment,
-    resultNumber,
-    resultColor: getDoubleColor(resultNumber),
-  };
+  const serverSeedCommitment = crypto.createHash("sha256").update(serverSeed).digest("hex");
+  const hash = crypto.createHmac("sha256", serverSeed).update(publicSeed).digest("hex");
+  const resultNumber = Number.parseInt(hash.slice(0, 8), 16) % 15;
+  return { serverSeed, publicSeed, serverSeedCommitment, resultNumber, resultColor: getDoubleColor(resultNumber) };
 }
 
 function getDoubleColor(number) {
-  if (number === 0) {
-    return "green";
-  }
-
+  if (number === 0) return "green";
   return number <= 7 ? "red" : "black";
 }
 
@@ -1309,42 +910,27 @@ function publicFinishedDoubleRound(round) {
     resultColor: round.resultColor,
     won: round.won,
     payoutMultiplier: round.payoutMultiplier,
-
     serverSeed: round.serverSeed,
     publicSeed: round.publicSeed,
     serverSeedCommitment: round.serverSeedCommitment,
-
     frontendKnowsOutcome: true,
   };
 }
 
 async function persistDoubleRound(round) {
   try {
-    logServer("double", "database_persist_request", {
-      externalRoundId: round.externalRoundId,
-    });
-
+    logServer("double", "database_persist_request", { externalRoundId: round.externalRoundId });
     await saveDoubleRound(round);
-
     safeApiLog("double", "round_persisted", {
       externalRoundId: round.externalRoundId,
       resultNumber: round.resultNumber,
       resultColor: round.resultColor,
     });
-
-    logServer("double", "database_persist_success", {
-      externalRoundId: round.externalRoundId,
-    });
+    logServer("double", "database_persist_success", { externalRoundId: round.externalRoundId });
   } catch (error) {
-    logServer("double", "database_persist_failed", {
-      message: error.message,
-    });
+    logServer("double", "database_persist_failed", { message: error.message });
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/* Logs and utilities                                                         */
-/* -------------------------------------------------------------------------- */
 
 function logServer(game, event, details = {}) {
   const log = {
@@ -1355,22 +941,16 @@ function logServer(game, event, details = {}) {
     details,
     createdAt: new Date().toISOString(),
   };
-
   console.log(`[game-server][${game}] ${event}`, details);
-
   serverLogs.unshift(log);
   serverLogs = serverLogs.slice(0, 250);
-
   io.emit("game_server_log", log);
-
   safeAudit("game-server", game, event, details);
-
   return log;
 }
 
 function safeApiLog(game, event, details = {}) {
   console.log(`[api][${game}] ${event}`, details);
-
   safeAudit("api", game, event, details);
 }
 
@@ -1381,20 +961,12 @@ function safeAudit(source, game, event, details) {
 }
 
 function clamp(value, min, max) {
-  if (!Number.isFinite(value)) {
-    return min;
-  }
-
-  return Math.max(
-    min,
-    Math.min(max, Math.floor(value))
-  );
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.floor(value)));
 }
 
 function delay(milliseconds) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 boot();

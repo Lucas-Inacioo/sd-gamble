@@ -1,21 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * This value matches the current educational Crash backend, which limits
- * results near 5.00x. Raise it if the backend later allows higher rounds.
+ * Controls the visual for Crash multipliers.
  */
-const FLIGHT_REFERENCE_MULTIPLIER = 5;
-
-/**
- * This controls only the rocket's visual catch-up speed. It does not calculate
- * a multiplier and never changes the authoritative number shown on screen.
- */
+const UNBOUNDED_PROGRESS_EXPONENT = 0.5;
 const FOLLOW_RATE = 14;
 const EPSILON = 0.00025;
 
 /**
- * A fixed cubic Bézier route. It is never recalculated or rescaled while a
- * round is active, avoiding the plot flicker caused by dynamic axes.
+ * A fixed cubic Bézier route.
  */
 const ROUTE = {
   start: { x: 105, y: 335 },
@@ -27,16 +20,15 @@ const ROUTE = {
 const ROUTE_PATH = "M 105 335 C 310 335, 635 245, 900 65";
 
 /**
- * Converts an official multiplier into a bounded visual progress value.
- * A logarithmic mapping gives the first multipliers enough visible movement.
+ * Converts an official multiplier into a visual progress value from 0 to 1.
  */
 function multiplierToProgress(multiplier) {
   const safeMultiplier = Math.max(1, Number(multiplier) || 1);
 
   return clamp(
-    Math.log(safeMultiplier) / Math.log(FLIGHT_REFERENCE_MULTIPLIER),
+    1 - Math.pow(safeMultiplier, -UNBOUNDED_PROGRESS_EXPONENT),
     0,
-    1
+    0.995
   );
 }
 
@@ -90,11 +82,36 @@ function getRocketTransform(progress) {
 }
 
 /**
+ * Shows milestone labels derived from the same mapping used by the rocket.
+ */
+function CrashFlightMilestones() {
+  const values = [1, 2, 10, 100];
+
+  return (
+    <g className="crash-flight-milestones">
+      {values.map((value) => {
+        const point = getBezierPoint(multiplierToProgress(value));
+        const labelY = Math.min(395, point.y + 38);
+
+        return (
+          <text
+            key={value}
+            x={point.x}
+            y={labelY}
+            textAnchor="middle"
+          >
+            {value.toFixed(2)}x
+          </text>
+        );
+      })}
+    </g>
+  );
+}
+
+/**
  * Fixed flight visual for the Crash game.
  *
  * The multiplier prop must be the latest value received from Socket.IO.
- * The rocket only interpolates toward values that were already received.
- * It never predicts a next multiplier and never determines a crash result.
  */
 export default function CrashFlightVisual({
   phase,
@@ -133,8 +150,6 @@ export default function CrashFlightVisual({
     targetProgressRef.current = initialProgress;
     visibleProgressRef.current = initialProgress;
     setVisibleProgress(initialProgress);
-    // Intentionally tied to round identity only; multiplier updates are handled
-    // below and should be smoothed, not snapped.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roundId]);
 
@@ -282,13 +297,7 @@ export default function CrashFlightVisual({
         <path d={ROUTE_PATH} className="crash-flight-route-glow" />
         <path d={ROUTE_PATH} className="crash-flight-route-line" />
 
-        <g className="crash-flight-milestones">
-          <text x="80" y="380">1.00x</text>
-          <text x="335" y="335">2.00x</text>
-          <text x="590" y="230">3.00x</text>
-          <text x="780" y="120">4.00x</text>
-          <text x="910" y="55">5.00x</text>
-        </g>
+        <CrashFlightMilestones />
 
         {phase === "crashed" && (
           <g

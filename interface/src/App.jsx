@@ -5,9 +5,6 @@ import DoubleGame from "./games/DoubleGame.jsx";
 
 /**
  * Main application shell.
- *
- * The selected game is deliberately stored at this level because navigation is
- * a presentation concern. Each game owns only its own connection and state.
  */
 export default function App() {
   const [selectedGame, setSelectedGame] = useState("crash");

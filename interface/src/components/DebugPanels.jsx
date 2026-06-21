@@ -2,8 +2,6 @@ import React from "react";
 
 /**
  * Standard card used across the interface.
- * Component code contains structure and semantics only; visual rules live in
- * `src/styles/components.css`.
  */
 export function Card({ children, compact = false, className = "" }) {
   const classes = ["card", compact && "card--compact", className]
@@ -15,8 +13,6 @@ export function Card({ children, compact = false, className = "" }) {
 
 /**
  * Displays a small, accessible status summary.
- * The visual status is intentionally accompanied by text so color is not the
- * only source of meaning.
  */
 export function StatusBox({ label, value }) {
   const normalized = String(value || "unknown").toLowerCase();
@@ -54,8 +50,6 @@ export function StatusBox({ label, value }) {
 
 /**
  * Reusable panel for WebSocket events, API logs and game-server logs.
- * The component is intentionally generic so every game presents technical
- * data in the same format.
  */
 export function DebugPanel({ title, items = [], eventMode = false, onRefresh }) {
   return (

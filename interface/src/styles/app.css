@@ -1,8 +1,25 @@
 /** Styles for the application shell and game navigation. */
-.app-shell {
+.app-root {
   display: flex;
   min-height: 100vh;
+  flex-direction: column;
   background: var(--color-page);
+}
+
+.app-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.app-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 .app-sidebar {
@@ -16,8 +33,37 @@
 }
 
 .app-logo {
-  margin: 0 0 var(--space-5);
+  margin: 0;
   font-size: 1.4rem;
+}
+
+.balance-bar {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+}
+
+.balance-bar__label {
+  color: var(--color-muted);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+}
+
+.balance-bar__value {
+  color: var(--color-success);
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
+.balance-bar__status {
+  color: var(--color-warning);
+  font-size: 0.75rem;
 }
 
 .app-nav-button {
@@ -51,6 +97,11 @@
 }
 
 @media (max-width: 760px) {
+  .app-topbar {
+    flex-wrap: wrap;
+    padding: var(--space-3);
+  }
+
   .app-shell {
     flex-direction: column;
   }

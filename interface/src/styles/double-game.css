@@ -1,4 +1,8 @@
 /** Double-specific color choices, reel and animation. */
+.double-game .form-label {
+  max-width: 220px;
+}
+
 .double-choices {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

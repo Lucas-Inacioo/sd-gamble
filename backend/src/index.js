@@ -22,6 +22,7 @@ const MULTIPLIER_UPDATE_MS = 100;
 const CRASH_GROWTH_RATE = Number(process.env.CRASH_GROWTH_RATE || 0.06);
 const MINES_BOARD_SIZE = 25;
 const DOUBLE_SPIN_MS = 1400;
+const STARTING_BALANCE = Number(process.env.STARTING_BALANCE || 1000);
 
 const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173")
   .split(",")
@@ -59,6 +60,35 @@ let crashPhase = "booting";
 let waitingSecondsLeft = null;
 let currentCrashRound = null;
 let serverLogs = [];
+
+// Balances live per player id (a value the browser keeps in localStorage),
+// not per socket, so the amount survives reconnects and switching games.
+const playerBalances = new Map();
+const playerSocketIds = new Map();
+
+function getBalance(playerId) {
+  if (!playerBalances.has(playerId)) {
+    playerBalances.set(playerId, STARTING_BALANCE);
+  }
+  return playerBalances.get(playerId);
+}
+
+/** Applies a balance change and pushes the new value to every open socket for this player. */
+function adjustBalance(playerId, delta) {
+  const next = Number((getBalance(playerId) + delta).toFixed(2));
+  playerBalances.set(playerId, next);
+  pushBalance(playerId);
+  return next;
+}
+
+function pushBalance(playerId) {
+  const balance = getBalance(playerId);
+  const socketIds = playerSocketIds.get(playerId);
+  if (!socketIds) return;
+  for (const socketId of socketIds) {
+    io.sockets.sockets.get(socketId)?.emit("balance_update", { balance });
+  }
+}
 
 app.get("/health", async (_req, res) => {
   try {
@@ -178,11 +208,25 @@ app.use((error, _req, res, _next) => {
 });
 
 io.on("connection", (socket) => {
-  logServer("system", "client_connected", { socketId: socket.id });
+  const playerId =
+    String(socket.handshake.auth?.playerId || "").trim() || crypto.randomUUID();
+  socket.data.playerId = playerId;
+
+  if (!playerSocketIds.has(playerId)) {
+    playerSocketIds.set(playerId, new Set());
+  }
+  playerSocketIds.get(playerId).add(socket.id);
+
+  logServer("system", "client_connected", { socketId: socket.id, playerId });
   socket.emit("server_snapshot", buildCrashSnapshot());
   socket.emit("server_logs_snapshot", { logs: serverLogs.slice(0, 80) });
+  socket.emit("balance_update", { balance: getBalance(playerId) });
 
   socket.on("disconnect", () => {
+    playerSocketIds.get(playerId)?.delete(socket.id);
+    if (playerSocketIds.get(playerId)?.size === 0) {
+      playerSocketIds.delete(playerId);
+    }
     logServer("system", "client_disconnected", { socketId: socket.id });
   });
 
@@ -427,6 +471,12 @@ function queueCrashBet(socket, payload) {
     return;
   }
 
+  const playerId = socket.data.playerId;
+  if (amount > getBalance(playerId)) {
+    rejectCrashBet(socket, "Insufficient balance for this bet.", "insufficient_balance");
+    return;
+  }
+
   const bet = {
     id: crypto.randomUUID(),
     status: "queued",
@@ -441,6 +491,7 @@ function queueCrashBet(socket, payload) {
   };
 
   socket.data.crashBet = bet;
+  adjustBalance(playerId, -bet.amount);
 
   logServer("crash", "bet_queued", {
     socketId: socket.id,
@@ -463,6 +514,7 @@ function cancelQueuedCrashBet(socket) {
 
   bet.status = "cancelled";
   bet.finishedAtMs = Date.now();
+  adjustBalance(socket.data.playerId, bet.amount);
 
   logServer("crash", "bet_cancelled", {
     socketId: socket.id,
@@ -550,6 +602,7 @@ function cashOutCrashBet(socket, options = {}) {
   bet.finishedAtMs = Date.now();
   bet.cashOutMultiplier = Number(multiplier.toFixed(2));
   bet.payout = Number((bet.amount * bet.cashOutMultiplier).toFixed(2));
+  adjustBalance(socket.data.playerId, bet.payout);
 
   logServer("crash", "bet_cashed_out", {
     socketId: socket.id,
@@ -633,7 +686,25 @@ function publicCrashBet(bet) {
 }
 
 function startMinesGame(socket, payload) {
+  if (socket.data.minesGame?.status === "active") {
+    rejectMines(socket, "A Mines game is already active.", "game_already_active");
+    return;
+  }
+
   const minesCount = clamp(Number(payload.minesCount || 3), 1, MINES_BOARD_SIZE - 1);
+  const amount = Number(payload.amount);
+
+  if (!Number.isFinite(amount) || amount < 1 || amount > 10000) {
+    rejectMines(socket, "Bet amount must be between 1 and 10000.", "invalid_amount");
+    return;
+  }
+
+  const playerId = socket.data.playerId;
+  if (amount > getBalance(playerId)) {
+    rejectMines(socket, "Insufficient balance for this bet.", "insufficient_balance");
+    return;
+  }
+
   const secret = generateMinesSecret(minesCount);
   const game = {
     status: "active",
@@ -641,6 +712,8 @@ function startMinesGame(socket, payload) {
     startedAtMs: Date.now(),
     finishedAtMs: null,
     minesCount,
+    amount: Number(amount.toFixed(2)),
+    payout: 0,
     minePositions: secret.minePositions,
     revealedTiles: [],
     payoutMultiplier: 1,
@@ -649,11 +722,13 @@ function startMinesGame(socket, payload) {
     serverSeedCommitment: secret.serverSeedCommitment,
   };
   socket.data.minesGame = game;
+  adjustBalance(playerId, -game.amount);
 
   logServer("mines", "game_started", {
     socketId: socket.id,
     externalGameId: game.externalGameId,
     minesCount,
+    amount: game.amount,
     serverSeedCommitment: game.serverSeedCommitment,
     note: "Mine positions remain private until the game ends.",
   });
@@ -661,6 +736,7 @@ function startMinesGame(socket, payload) {
   socket.emit("mines_game_started", {
     externalGameId: game.externalGameId,
     minesCount,
+    amount: game.amount,
     boardSize: MINES_BOARD_SIZE,
     revealedTiles: [],
     payoutMultiplier: 1,
@@ -707,9 +783,12 @@ function revealMinesTile(socket, payload) {
   if (game.revealedTiles.length === MINES_BOARD_SIZE - game.minesCount) {
     game.status = "won";
     game.finishedAtMs = Date.now();
+    game.payout = Number((game.amount * game.payoutMultiplier).toFixed(2));
+    adjustBalance(socket.data.playerId, game.payout);
     logServer("mines", "all_safe_tiles_revealed", {
       externalGameId: game.externalGameId,
       payoutMultiplier: game.payoutMultiplier,
+      payout: game.payout,
     });
     socket.emit("mines_game_cashed_out", publicFinishedMinesGame(game));
     persistMinesGame(game);
@@ -744,10 +823,13 @@ function cashOutMinesGame(socket) {
 
   game.status = "cashed_out";
   game.finishedAtMs = Date.now();
+  game.payout = Number((game.amount * game.payoutMultiplier).toFixed(2));
+  adjustBalance(socket.data.playerId, game.payout);
   logServer("mines", "game_cashed_out", {
     externalGameId: game.externalGameId,
     revealedCount: game.revealedTiles.length,
     payoutMultiplier: game.payoutMultiplier,
+    payout: game.payout,
     note: "Mine positions are now revealed after cash out.",
   });
   socket.emit("mines_game_cashed_out", publicFinishedMinesGame(game));
@@ -792,6 +874,8 @@ function publicFinishedMinesGame(game, extra = {}) {
     externalGameId: game.externalGameId,
     status: game.status,
     minesCount: game.minesCount,
+    amount: game.amount,
+    payout: game.payout,
     revealedTiles: game.revealedTiles,
     minePositions: game.minePositions,
     payoutMultiplier: game.payoutMultiplier,
@@ -830,11 +914,27 @@ function startDoubleRound(socket, payload) {
     return;
   }
 
+  const amount = Number(payload.amount);
+  if (!Number.isFinite(amount) || amount < 1 || amount > 10000) {
+    socket.emit("double_error", { message: "Bet amount must be between 1 and 10000." });
+    logServer("double", "round_rejected", { socketId: socket.id, reason: "invalid_amount" });
+    return;
+  }
+
+  const playerId = socket.data.playerId;
+  if (amount > getBalance(playerId)) {
+    socket.emit("double_error", { message: "Insufficient balance for this bet." });
+    logServer("double", "round_rejected", { socketId: socket.id, reason: "insufficient_balance" });
+    return;
+  }
+
   const secret = generateDoubleSecret();
   const round = {
     status: "spinning",
     externalRoundId: crypto.randomUUID(),
     selectedColor,
+    amount: Number(amount.toFixed(2)),
+    payout: 0,
     resultNumber: secret.resultNumber,
     resultColor: secret.resultColor,
     won: null,
@@ -846,11 +946,13 @@ function startDoubleRound(socket, payload) {
     serverSeedCommitment: secret.serverSeedCommitment,
   };
   socket.data.doubleRound = round;
+  adjustBalance(playerId, -round.amount);
 
   logServer("double", "round_started", {
     socketId: socket.id,
     externalRoundId: round.externalRoundId,
     selectedColor,
+    amount: round.amount,
     serverSeedCommitment: round.serverSeedCommitment,
     note: "Outcome remains private until the spin ends.",
   });
@@ -858,6 +960,7 @@ function startDoubleRound(socket, payload) {
   socket.emit("double_round_started", {
     externalRoundId: round.externalRoundId,
     selectedColor,
+    amount: round.amount,
     spinDurationMs: DOUBLE_SPIN_MS,
     serverSeedCommitment: round.serverSeedCommitment,
     frontendKnowsOutcome: false,
@@ -869,6 +972,11 @@ function startDoubleRound(socket, payload) {
     round.finishedAtMs = Date.now();
     round.won = round.selectedColor === round.resultColor;
     round.payoutMultiplier = round.won ? getDoublePayout(round.selectedColor) : 0;
+    round.payout = round.won ? Number((round.amount * round.payoutMultiplier).toFixed(2)) : 0;
+
+    if (round.payout > 0) {
+      adjustBalance(playerId, round.payout);
+    }
 
     logServer("double", "round_finished", {
       externalRoundId: round.externalRoundId,
@@ -877,6 +985,7 @@ function startDoubleRound(socket, payload) {
       resultColor: round.resultColor,
       won: round.won,
       payoutMultiplier: round.payoutMultiplier,
+      payout: round.payout,
     });
 
     socket.emit("double_round_finished", publicFinishedDoubleRound(round));
@@ -906,6 +1015,8 @@ function publicFinishedDoubleRound(round) {
   return {
     externalRoundId: round.externalRoundId,
     selectedColor: round.selectedColor,
+    amount: round.amount,
+    payout: round.payout,
     resultNumber: round.resultNumber,
     resultColor: round.resultColor,
     won: round.won,

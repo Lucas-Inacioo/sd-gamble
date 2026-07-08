@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { API_BASE_URL, GAME_SERVER_URL } from "../config.js";
+import { getPlayerId } from "../playerId.js";
 import { Card, DebugPanel, StatusBox } from "../components/DebugPanels.jsx";
 
 const NUMBERS = Array.from({ length: 15 }, (_, index) => index);
@@ -22,8 +23,10 @@ export default function DoubleGame() {
   const [selectedColor, setSelectedColor] = useState("red");
   const [visualNumber, setVisualNumber] = useState(0);
   const [round, setRound] = useState(createEmptyRound());
+  const [betAmount, setBetAmount] = useState("10");
+  const [balance, setBalance] = useState(null);
   const [message, setMessage] = useState(
-    "Choose red, black, or green to begin."
+    "Choose a bet amount and a color to begin."
   );
 
   const [events, setEvents] = useState([]);
@@ -37,12 +40,17 @@ export default function DoubleGame() {
 
     const socket = io(GAME_SERVER_URL, {
       transports: ["websocket", "polling"],
+      auth: { playerId: getPlayerId() },
     });
     socketRef.current = socket;
 
     socket.on("connect", () => {
       setSocketStatus("connected");
       addEvent("socket_connected", { socketId: socket.id });
+    });
+
+    socket.on("balance_update", (data) => {
+      setBalance(Number(data.balance));
     });
 
     socket.on("connect_error", (error) => {
@@ -71,6 +79,8 @@ export default function DoubleGame() {
       setSelectedColor(data.selectedColor);
       setRound({
         externalRoundId: data.externalRoundId,
+        amount: Number(data.amount || 0),
+        payout: 0,
         resultNumber: null,
         resultColor: null,
         won: null,
@@ -90,6 +100,8 @@ export default function DoubleGame() {
       setStatus("finished");
       setRound({
         externalRoundId: data.externalRoundId,
+        amount: Number(data.amount || 0),
+        payout: Number(data.payout || 0),
         resultNumber: Number(data.resultNumber),
         resultColor: data.resultColor,
         won: Boolean(data.won),
@@ -102,7 +114,9 @@ export default function DoubleGame() {
       });
       setMessage(
         data.won
-          ? `You won ${Number(data.payoutMultiplier).toFixed(2)}x.`
+          ? `You won ${Number(data.payoutMultiplier).toFixed(2)}x (${Number(
+              data.payout || 0
+            ).toFixed(2)} credits).`
           : `Result: ${data.resultColor} ${data.resultNumber}.`
       );
       await loadApiData();
@@ -120,11 +134,25 @@ export default function DoubleGame() {
     };
   }, []);
 
-  /** Sends the selected color to the server if no other round is spinning. */
+  /** Sends the selected color and bet amount to the server if no other round is spinning. */
   function startRound(color) {
-    if (status !== "spinning") {
-      socketRef.current?.emit("double_start_round", { selectedColor: color });
+    if (status === "spinning") return;
+
+    const amount = Number(betAmount);
+    if (!Number.isFinite(amount) || amount < 1) {
+      setMessage("Enter a bet amount greater than or equal to 1.");
+      return;
     }
+
+    if (balance !== null && amount > balance) {
+      setMessage("Bet amount exceeds your current balance.");
+      return;
+    }
+
+    socketRef.current?.emit("double_start_round", {
+      selectedColor: color,
+      amount,
+    });
   }
 
   /** Starts the presentation-only spinning effect. */
@@ -204,7 +232,7 @@ export default function DoubleGame() {
   const visualColor = getDoubleColor(visualNumber);
 
   return (
-    <div>
+    <div className="double-game">
       <Card>
         <h1 className="game-title">Double</h1>
 
@@ -221,6 +249,20 @@ export default function DoubleGame() {
 
       <Card>
         <h2 className="section-heading">Choose a color</h2>
+
+        <label className="form-label">
+          Bet amount
+          <input
+            className="form-control"
+            type="number"
+            min="1"
+            max="10000"
+            step="1"
+            value={betAmount}
+            disabled={status === "spinning"}
+            onChange={(event) => setBetAmount(event.target.value)}
+          />
+        </label>
 
         <br />
 
@@ -325,6 +367,8 @@ export default function DoubleGame() {
 function createEmptyRound() {
   return {
     externalRoundId: null,
+    amount: 0,
+    payout: 0,
     resultNumber: null,
     resultColor: null,
     won: null,

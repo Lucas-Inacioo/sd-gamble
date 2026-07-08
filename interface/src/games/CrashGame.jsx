@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
 import { API_BASE_URL, GAME_SERVER_URL } from "../config.js";
+import { getPlayerId } from "../playerId.js";
 import {
   Card,
   DebugPanel,
@@ -40,6 +41,7 @@ export default function CrashGame() {
   const [betAmount, setBetAmount] = useState("10");
   const [autoCashOut, setAutoCashOut] = useState("2.00");
   const [bet, setBet] = useState(null);
+  const [balance, setBalance] = useState(null);
   const [betMessage, setBetMessage] = useState(
     "Place a bet during the waiting phase."
   );
@@ -50,6 +52,7 @@ export default function CrashGame() {
 
     const socket = io(GAME_SERVER_URL, {
       transports: ["websocket", "polling"],
+      auth: { playerId: getPlayerId() },
     });
 
     socketRef.current = socket;
@@ -57,6 +60,10 @@ export default function CrashGame() {
     socket.on("connect", () => {
       setSocketStatus("connected");
       addEvent("socket_connected", { socketId: socket.id });
+    });
+
+    socket.on("balance_update", (data) => {
+      setBalance(Number(data.balance));
     });
 
     socket.on("connect_error", (error) => {
@@ -296,6 +303,11 @@ export default function CrashGame() {
 
     if (!Number.isFinite(amount) || amount < 1) {
       setBetMessage("Enter a demo amount greater than or equal to 1.");
+      return;
+    }
+
+    if (balance !== null && amount > balance) {
+      setBetMessage("Bet amount exceeds your current balance.");
       return;
     }
 

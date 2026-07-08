@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { API_BASE_URL, GAME_SERVER_URL } from "../config.js";
+import { getPlayerId } from "../playerId.js";
 import { Card, DebugPanel, StatusBox } from "../components/DebugPanels.jsx";
 
 const BOARD_SIZE = 25;
@@ -19,14 +20,18 @@ export default function MinesGame() {
   const [apiStatus, setApiStatus] = useState("checking");
   const [status, setStatus] = useState("idle");
   const [minesCount, setMinesCount] = useState(3);
+  const [betAmount, setBetAmount] = useState("10");
   const [gameId, setGameId] = useState(null);
+  const [betAmountLocked, setBetAmountLocked] = useState(0);
   const [revealedTiles, setRevealedTiles] = useState([]);
   const [minePositions, setMinePositions] = useState(null);
   const [payoutMultiplier, setPayoutMultiplier] = useState(1);
+  const [payout, setPayout] = useState(0);
+  const [balance, setBalance] = useState(null);
   const [seedCommitment, setSeedCommitment] = useState(null);
   const [proof, setProof] = useState(null);
   const [message, setMessage] = useState(
-    "Choose the number of mines and start a game."
+    "Choose a bet amount and number of mines, then start a game."
   );
 
   const [events, setEvents] = useState([]);
@@ -40,12 +45,17 @@ export default function MinesGame() {
 
     const socket = io(GAME_SERVER_URL, {
       transports: ["websocket", "polling"],
+      auth: { playerId: getPlayerId() },
     });
     socketRef.current = socket;
 
     socket.on("connect", () => {
       setSocketStatus("connected");
       addEvent("socket_connected", { socketId: socket.id });
+    });
+
+    socket.on("balance_update", (data) => {
+      setBalance(Number(data.balance));
     });
 
     socket.on("connect_error", (error) => {
@@ -72,9 +82,11 @@ export default function MinesGame() {
       addEvent("mines_game_started", data);
       setStatus("active");
       setGameId(data.externalGameId);
+      setBetAmountLocked(Number(data.amount || 0));
       setRevealedTiles([]);
       setMinePositions(null);
       setPayoutMultiplier(1);
+      setPayout(0);
       setSeedCommitment(data.serverSeedCommitment);
       setProof(null);
       setMessage("Game active. Mine positions are hidden on the game server.");
@@ -93,6 +105,7 @@ export default function MinesGame() {
       setRevealedTiles(data.revealedTiles || []);
       setMinePositions(data.minePositions || []);
       setPayoutMultiplier(0);
+      setPayout(0);
       setProof({
         serverSeed: data.serverSeed,
         publicSeed: data.publicSeed,
@@ -107,12 +120,15 @@ export default function MinesGame() {
       setRevealedTiles(data.revealedTiles || []);
       setMinePositions(data.minePositions || []);
       setPayoutMultiplier(Number(data.payoutMultiplier || 0));
+      setPayout(Number(data.payout || 0));
       setProof({
         serverSeed: data.serverSeed,
         publicSeed: data.publicSeed,
       });
       setMessage(
-        `Game finished at ${Number(data.payoutMultiplier || 0).toFixed(2)}x. The server revealed the board.`
+        `Game finished at ${Number(data.payoutMultiplier || 0).toFixed(2)}x for ${Number(
+          data.payout || 0
+        ).toFixed(2)} credits. The server revealed the board.`
       );
       await loadApiData();
     });
@@ -130,9 +146,20 @@ export default function MinesGame() {
 
   /** Asks the server to create a fresh, private Mines board. */
   function startGame() {
-    if (socketRef.current && status !== "active") {
-      socketRef.current.emit("mines_start_game", { minesCount });
+    if (!socketRef.current || status === "active") return;
+
+    const amount = Number(betAmount);
+    if (!Number.isFinite(amount) || amount < 1) {
+      setMessage("Enter a bet amount greater than or equal to 1.");
+      return;
     }
+
+    if (balance !== null && amount > balance) {
+      setMessage("Bet amount exceeds your current balance.");
+      return;
+    }
+
+    socketRef.current.emit("mines_start_game", { minesCount, amount });
   }
 
   /** Requests a tile reveal. */
@@ -215,6 +242,20 @@ export default function MinesGame() {
 
       <Card>
         <div className="mines-controls">
+          <label className="form-label">
+            Bet amount
+            <input
+              className="form-control"
+              type="number"
+              min="1"
+              max="10000"
+              step="1"
+              value={betAmount}
+              disabled={status === "active"}
+              onChange={(event) => setBetAmount(event.target.value)}
+            />
+          </label>
+
           <label className="mines-select-label">
             Mine count
             <select
@@ -246,7 +287,8 @@ export default function MinesGame() {
             disabled={status !== "active" || revealedTiles.length === 0}
             onClick={cashOut}
           >
-            Cash out ({payoutMultiplier.toFixed(2)}x)
+            Cash out ({payoutMultiplier.toFixed(2)}x ={" "}
+            {(betAmountLocked * payoutMultiplier).toFixed(2)} credits)
           </button>
         </div>
 
@@ -293,6 +335,8 @@ export default function MinesGame() {
               status,
               gameId,
               minesCount,
+              betAmountLocked,
+              payout,
               revealedTiles,
               minePositions,
               payoutMultiplier,
